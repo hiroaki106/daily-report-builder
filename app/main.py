@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# hoge
 import argparse
 import html
 import os
