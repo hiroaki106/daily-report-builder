@@ -1,5 +1,6 @@
 import unittest
 import json
+from unittest.mock import Mock
 
 import httpx
 
@@ -7,6 +8,27 @@ from app.jira_client import JiraAPIError, JiraClient, extract_status_changes
 
 
 class JiraClientTest(unittest.TestCase):
+    def test_logs_request_when_logger_is_provided(self) -> None:
+        mock_logger = Mock()
+        transport = httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"issues": []})
+        )
+
+        with JiraClient(
+            base_url="https://example.atlassian.net",
+            email="user@example.com",
+            api_token="token",
+            transport=transport,
+            logger=mock_logger,
+        ) as client:
+            client.search_issues_by_jql("project = DEV")
+
+        mock_logger.debug.assert_called_once_with(
+            "Jira API request: %s %s",
+            "POST",
+            "rest/api/3/search/jql",
+        )
+
     def test_search_issues_by_jql_posts_expected_payload(self) -> None:
         captured_request: httpx.Request | None = None
 
@@ -125,6 +147,7 @@ class JiraClientTest(unittest.TestCase):
 
     def test_update_filter_jql_keeps_existing_name_and_description(self) -> None:
         captured_update: httpx.Request | None = None
+        mock_logger = Mock()
 
         def handler(request: httpx.Request) -> httpx.Response:
             nonlocal captured_update
@@ -157,6 +180,7 @@ class JiraClientTest(unittest.TestCase):
             email="user@example.com",
             api_token="token",
             transport=transport,
+            logger=mock_logger,
         ) as client:
             updated_filter = client.update_filter_jql(
                 "10000",
@@ -179,6 +203,10 @@ class JiraClientTest(unittest.TestCase):
                 "jql": "project = NEW ORDER BY updated DESC",
                 "description": "Existing description",
             },
+        )
+        mock_logger.info.assert_called_once_with(
+            "Updated Jira filter JQL: filter_id=%s",
+            "10000",
         )
 
     def test_update_filter_jql_omits_description_when_filter_has_no_description(self) -> None:
@@ -229,6 +257,88 @@ class JiraClientTest(unittest.TestCase):
                 "name": "My Filter",
                 "jql": "assignee = currentUser()",
             },
+        )
+
+    def test_get_filter_statistics_uses_statistics_endpoint(self) -> None:
+        captured_request: httpx.Request | None = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_request
+            captured_request = request
+            return httpx.Response(
+                200,
+                json={
+                    "filterTitle": "My Filter",
+                    "statType": "statuses",
+                    "results": [],
+                },
+            )
+
+        transport = httpx.MockTransport(handler)
+
+        with JiraClient(
+            base_url="https://example.atlassian.net",
+            email="user@example.com",
+            api_token="token",
+            transport=transport,
+        ) as client:
+            result = client.get_filter_statistics(
+                10000,
+                "statuses",
+                include_resolved_issues=False,
+            )
+
+        self.assertEqual(result["statType"], "statuses")
+        self.assertIsNotNone(captured_request)
+
+        assert captured_request is not None
+        self.assertEqual(captured_request.method, "GET")
+        self.assertEqual(
+            str(captured_request.url),
+            "https://example.atlassian.net/rest/gadget/1.0/statistics?filterId=filter-10000&statType=statuses&includeResolvedIssues=false",
+        )
+
+    def test_get_two_dimensional_filter_statistics_uses_generate_endpoint(self) -> None:
+        captured_request: httpx.Request | None = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_request
+            captured_request = request
+            return httpx.Response(
+                200,
+                json={
+                    "filterTitle": "My Filter",
+                    "xstatType": "statuses",
+                    "ystatType": "assignees",
+                    "cells": [],
+                },
+            )
+
+        transport = httpx.MockTransport(handler)
+
+        with JiraClient(
+            base_url="https://example.atlassian.net",
+            email="user@example.com",
+            api_token="token",
+            transport=transport,
+        ) as client:
+            result = client.get_two_dimensional_filter_statistics(
+                "filter-10000",
+                x_stat_type="statuses",
+                y_stat_type="assignees",
+                sort_by="total",
+                sort_direction="desc",
+                number_to_show=10,
+            )
+
+        self.assertEqual(result["xstatType"], "statuses")
+        self.assertIsNotNone(captured_request)
+
+        assert captured_request is not None
+        self.assertEqual(captured_request.method, "GET")
+        self.assertEqual(
+            str(captured_request.url),
+            "https://example.atlassian.net/rest/gadget/1.0/twoDimensionalFilterStats/generate?filterId=filter-10000&xstattype=statuses&ystattype=assignees&sortBy=total&sortDirection=desc&numberToShow=10",
         )
 
 

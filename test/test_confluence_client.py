@@ -1,5 +1,6 @@
 import json
 import unittest
+from unittest.mock import Mock
 
 import httpx
 
@@ -7,8 +8,30 @@ from app.confluence_client import ConfluenceAPIError, ConfluenceClient
 
 
 class ConfluenceClientTest(unittest.TestCase):
+    def test_logs_request_when_logger_is_provided(self) -> None:
+        mock_logger = Mock()
+        transport = httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"accountId": "abc123"})
+        )
+
+        with ConfluenceClient(
+            base_url="https://example.atlassian.net",
+            email="user@example.com",
+            api_token="token",
+            transport=transport,
+            logger=mock_logger,
+        ) as client:
+            client.get_current_user()
+
+        mock_logger.debug.assert_called_once_with(
+            "Confluence API request: %s %s",
+            "GET",
+            "wiki/rest/api/user/current",
+        )
+
     def test_create_page_posts_expected_payload(self) -> None:
         captured_request: httpx.Request | None = None
+        mock_logger = Mock()
 
         def handler(request: httpx.Request) -> httpx.Response:
             nonlocal captured_request
@@ -31,6 +54,7 @@ class ConfluenceClientTest(unittest.TestCase):
             email="user@example.com",
             api_token="token",
             transport=transport,
+            logger=mock_logger,
         ) as client:
             page = client.create_page(
                 space_id="SPACE123",
@@ -60,6 +84,12 @@ class ConfluenceClientTest(unittest.TestCase):
                 },
                 "parentId": "PARENT123",
             },
+        )
+        mock_logger.info.assert_called_once_with(
+            "Created Confluence page: page_id=%s title=%s parent_id=%s",
+            "123",
+            "Daily Report",
+            "PARENT123",
         )
 
     def test_create_page_raises_for_api_error(self) -> None:
