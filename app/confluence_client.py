@@ -138,6 +138,32 @@ class ConfluenceClient:
 
         return None
 
+    def get_page(
+        self,
+        page_id: str | int,
+        *,
+        body_format: str | None = None,
+    ) -> dict[str, Any]:
+        """Fetch a Confluence page by ID.
+
+        Args:
+            page_id: Confluence page ID.
+            body_format: Optional body representation requested from Confluence,
+                such as ``storage`` or ``atlas_doc_format``.
+
+        Returns:
+            Raw Confluence page response.
+        """
+        params: dict[str, str] | None = None
+        if body_format is not None:
+            params = {"body-format": body_format}
+
+        return self._request(
+            "GET",
+            f"wiki/api/v2/pages/{quote(str(page_id), safe='')}",
+            params=params,
+        )
+
     def get_page_content(
         self, page_id: str | int, *, body_format: str = "storage"
     ) -> str | None:
@@ -152,11 +178,7 @@ class ConfluenceClient:
             Body value in the requested format, otherwise ``None`` when the
             response does not include that body format.
         """
-        response = self._request(
-            "GET",
-            f"wiki/api/v2/pages/{quote(str(page_id), safe='')}",
-            params={"body-format": body_format},
-        )
+        response = self.get_page(page_id, body_format=body_format)
         body = response.get("body")
         if not isinstance(body, dict):
             return None
@@ -215,6 +237,157 @@ class ConfluenceClient:
         )
         return page
 
+    def update_page(
+        self,
+        page_id: str | int,
+        *,
+        title: str,
+        body: str,
+        version_number: int,
+        status: str = "current",
+        representation: str = "storage",
+        parent_id: str | None = None,
+        version_message: str | None = None,
+        minor_edit: bool = False,
+    ) -> dict[str, Any]:
+        """Update a Confluence page.
+
+        Args:
+            page_id: Confluence page ID.
+            title: Page title.
+            body: Replacement page body value.
+            version_number: New Confluence page version number.
+            status: Confluence page status. Defaults to ``current``.
+            representation: Body representation. Defaults to ``storage``.
+            parent_id: Optional parent page ID. When provided, the page is kept
+                under or moved to that parent.
+            version_message: Optional version message.
+            minor_edit: Whether the update is a minor edit.
+
+        Returns:
+            Raw Confluence page update response.
+        """
+        version: dict[str, Any] = {
+            "number": version_number,
+            "minorEdit": minor_edit,
+        }
+        if version_message is not None:
+            version["message"] = version_message
+
+        payload: dict[str, Any] = {
+            "id": str(page_id),
+            "status": status,
+            "title": title,
+            "body": {
+                "representation": representation,
+                "value": body,
+            },
+            "version": version,
+        }
+        if parent_id is not None:
+            payload["parentId"] = parent_id
+
+        page = self._request(
+            "PUT",
+            f"wiki/api/v2/pages/{quote(str(page_id), safe='')}",
+            json=payload,
+        )
+        self._logger.info(
+            "Updated Confluence page: page_id=%s title=%s version=%s",
+            page_id,
+            title,
+            version_number,
+        )
+        return page
+
+    def create_or_update_page(
+        self,
+        *,
+        space_id: str,
+        parent_id: str,
+        title: str,
+        body: str,
+        status: str = "current",
+        representation: str = "storage",
+        version_message: str | None = None,
+        minor_edit: bool = False,
+    ) -> dict[str, Any]:
+        """Create a page when missing, otherwise replace the existing page body.
+
+        Args:
+            space_id: Confluence space ID where the page is created or searched.
+            parent_id: Parent page ID for newly created pages and updated pages.
+            title: Page title used to find or create the page.
+            body: Page body value.
+            status: Confluence page status. Defaults to ``current``.
+            representation: Body representation. Defaults to ``storage``.
+            version_message: Optional version message for updates.
+            minor_edit: Whether the update is a minor edit.
+
+        Returns:
+            Raw Confluence page creation or update response.
+        """
+        page_id = self.get_page_id_by_title(title, space_id=space_id)
+        if page_id is None:
+            return self.create_page(
+                space_id=space_id,
+                parent_id=parent_id,
+                title=title,
+                body=body,
+                status=status,
+                representation=representation,
+            )
+
+        page = self.get_page(page_id, body_format=representation)
+        version_number = _page_version_number(page) + 1
+        return self.update_page(
+            page_id,
+            title=title,
+            body=body,
+            version_number=version_number,
+            status=status,
+            representation=representation,
+            parent_id=parent_id,
+            version_message=version_message,
+            minor_edit=minor_edit,
+        )
+
+    def get_or_create_page(
+        self,
+        *,
+        space_id: str,
+        parent_id: str,
+        title: str,
+        body: str,
+        status: str = "current",
+        representation: str = "storage",
+    ) -> dict[str, Any]:
+        """Return an existing page by title, or create it when missing.
+
+        Args:
+            space_id: Confluence space ID where the page is created or searched.
+            parent_id: Parent page ID used when the page must be created.
+            title: Page title used to find or create the page.
+            body: Page body value used only when the page must be created.
+            status: Confluence page status. Defaults to ``current``.
+            representation: Body representation. Defaults to ``storage``.
+
+        Returns:
+            Existing raw Confluence page response, or the created page response.
+        """
+        page_id = self.get_page_id_by_title(title, space_id=space_id)
+        if page_id is not None:
+            return self.get_page(page_id, body_format=representation)
+
+        return self.create_page(
+            space_id=space_id,
+            parent_id=parent_id,
+            title=title,
+            body=body,
+            status=status,
+            representation=representation,
+        )
+
     def _request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         """Send an HTTP request and raise a ConfluenceAPIError on failure."""
         url = urljoin(self._base_url, path)
@@ -235,3 +408,17 @@ class ConfluenceClient:
             f"Confluence API request failed: {response.status_code} "
             f"{response.reason_phrase}: {detail}"
         )
+
+
+def _page_version_number(page: dict[str, Any]) -> int:
+    version = page.get("version")
+    if not isinstance(version, dict):
+        raise ConfluenceAPIError("Confluence page response did not include version")
+
+    number = version.get("number")
+    if not isinstance(number, int):
+        raise ConfluenceAPIError(
+            "Confluence page response did not include an integer version number"
+        )
+
+    return number

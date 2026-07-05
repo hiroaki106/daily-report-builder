@@ -204,6 +204,296 @@ class ConfluenceClientTest(unittest.TestCase):
             "https://example.atlassian.net/wiki/api/v2/pages/123?body-format=storage",
         )
 
+    def test_get_page_returns_raw_page(self) -> None:
+        captured_request: httpx.Request | None = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_request
+            captured_request = request
+            return httpx.Response(
+                200,
+                json={
+                    "id": "123",
+                    "title": "Daily Report",
+                    "version": {"number": 4},
+                },
+            )
+
+        transport = httpx.MockTransport(handler)
+
+        with ConfluenceClient(
+            base_url="https://example.atlassian.net",
+            email="user@example.com",
+            api_token="token",
+            transport=transport,
+        ) as client:
+            page = client.get_page("123", body_format="storage")
+
+        self.assertEqual(page["id"], "123")
+        self.assertEqual(page["version"]["number"], 4)
+        self.assertIsNotNone(captured_request)
+
+        assert captured_request is not None
+        self.assertEqual(captured_request.method, "GET")
+        self.assertEqual(
+            str(captured_request.url),
+            "https://example.atlassian.net/wiki/api/v2/pages/123?body-format=storage",
+        )
+
+    def test_update_page_puts_expected_payload(self) -> None:
+        captured_request: httpx.Request | None = None
+        mock_logger = Mock()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_request
+            captured_request = request
+            return httpx.Response(
+                200,
+                json={
+                    "id": "123",
+                    "title": "Daily Report",
+                    "version": {"number": 5},
+                },
+            )
+
+        transport = httpx.MockTransport(handler)
+
+        with ConfluenceClient(
+            base_url="https://example.atlassian.net",
+            email="user@example.com",
+            api_token="token",
+            transport=transport,
+            logger=mock_logger,
+        ) as client:
+            page = client.update_page(
+                "123",
+                title="Daily Report",
+                body="<p>updated</p>",
+                version_number=5,
+                parent_id="PARENT123",
+                version_message="Update daily report",
+                minor_edit=True,
+            )
+
+        self.assertEqual(page["version"]["number"], 5)
+        self.assertIsNotNone(captured_request)
+
+        assert captured_request is not None
+        self.assertEqual(captured_request.method, "PUT")
+        self.assertEqual(
+            str(captured_request.url),
+            "https://example.atlassian.net/wiki/api/v2/pages/123",
+        )
+        self.assertEqual(
+            json.loads(captured_request.content),
+            {
+                "id": "123",
+                "status": "current",
+                "title": "Daily Report",
+                "body": {
+                    "representation": "storage",
+                    "value": "<p>updated</p>",
+                },
+                "version": {
+                    "number": 5,
+                    "minorEdit": True,
+                    "message": "Update daily report",
+                },
+                "parentId": "PARENT123",
+            },
+        )
+        mock_logger.info.assert_called_once_with(
+            "Updated Confluence page: page_id=%s title=%s version=%s",
+            "123",
+            "Daily Report",
+            5,
+        )
+
+    def test_create_or_update_page_updates_existing_page(self) -> None:
+        requests: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            if request.method == "GET" and request.url.path == "/wiki/api/v2/pages":
+                return httpx.Response(
+                    200,
+                    json={
+                        "results": [
+                            {
+                                "id": "123",
+                                "title": "Daily Report",
+                            }
+                        ]
+                    },
+                )
+
+            if request.method == "GET":
+                return httpx.Response(
+                    200,
+                    json={
+                        "id": "123",
+                        "title": "Daily Report",
+                        "version": {"number": 4},
+                    },
+                )
+
+            return httpx.Response(
+                200,
+                json={
+                    "id": "123",
+                    "title": "Daily Report",
+                    "version": {"number": 5},
+                },
+            )
+
+        transport = httpx.MockTransport(handler)
+
+        with ConfluenceClient(
+            base_url="https://example.atlassian.net",
+            email="user@example.com",
+            api_token="token",
+            transport=transport,
+        ) as client:
+            page = client.create_or_update_page(
+                space_id="SPACE123",
+                parent_id="PARENT123",
+                title="Daily Report",
+                body="<p>updated</p>",
+                version_message="Refresh report",
+            )
+
+        self.assertEqual(page["version"]["number"], 5)
+        self.assertEqual([request.method for request in requests], ["GET", "GET", "PUT"])
+        self.assertEqual(
+            str(requests[0].url),
+            "https://example.atlassian.net/wiki/api/v2/pages?title=Daily+Report&limit=1&space-id=SPACE123",
+        )
+        self.assertEqual(
+            str(requests[1].url),
+            "https://example.atlassian.net/wiki/api/v2/pages/123?body-format=storage",
+        )
+        self.assertEqual(
+            json.loads(requests[2].content)["version"]["number"],
+            5,
+        )
+
+    def test_create_or_update_page_creates_when_missing(self) -> None:
+        requests: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            if request.method == "GET":
+                return httpx.Response(200, json={"results": []})
+
+            return httpx.Response(
+                200,
+                json={
+                    "id": "123",
+                    "title": "Daily Report",
+                },
+            )
+
+        transport = httpx.MockTransport(handler)
+
+        with ConfluenceClient(
+            base_url="https://example.atlassian.net",
+            email="user@example.com",
+            api_token="token",
+            transport=transport,
+        ) as client:
+            page = client.create_or_update_page(
+                space_id="SPACE123",
+                parent_id="PARENT123",
+                title="Daily Report",
+                body="<p>created</p>",
+            )
+
+        self.assertEqual(page["id"], "123")
+        self.assertEqual([request.method for request in requests], ["GET", "POST"])
+
+    def test_get_or_create_page_returns_existing_page_without_updating(self) -> None:
+        requests: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            if request.url.path == "/wiki/api/v2/pages":
+                return httpx.Response(
+                    200,
+                    json={
+                        "results": [
+                            {
+                                "id": "123",
+                                "title": "Daily Report",
+                            }
+                        ]
+                    },
+                )
+
+            return httpx.Response(
+                200,
+                json={
+                    "id": "123",
+                    "title": "Daily Report",
+                    "version": {"number": 4},
+                },
+            )
+
+        transport = httpx.MockTransport(handler)
+
+        with ConfluenceClient(
+            base_url="https://example.atlassian.net",
+            email="user@example.com",
+            api_token="token",
+            transport=transport,
+        ) as client:
+            page = client.get_or_create_page(
+                space_id="SPACE123",
+                parent_id="PARENT123",
+                title="Daily Report",
+                body="<p>ignored for existing page</p>",
+            )
+
+        self.assertEqual(page["id"], "123")
+        self.assertEqual([request.method for request in requests], ["GET", "GET"])
+        self.assertEqual(
+            str(requests[1].url),
+            "https://example.atlassian.net/wiki/api/v2/pages/123?body-format=storage",
+        )
+
+    def test_get_or_create_page_creates_when_missing(self) -> None:
+        requests: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            if request.method == "GET":
+                return httpx.Response(200, json={"results": []})
+
+            return httpx.Response(
+                200,
+                json={
+                    "id": "123",
+                    "title": "Daily Report",
+                },
+            )
+
+        transport = httpx.MockTransport(handler)
+
+        with ConfluenceClient(
+            base_url="https://example.atlassian.net",
+            email="user@example.com",
+            api_token="token",
+            transport=transport,
+        ) as client:
+            page = client.get_or_create_page(
+                space_id="SPACE123",
+                parent_id="PARENT123",
+                title="Daily Report",
+                body="<p>created</p>",
+            )
+
+        self.assertEqual(page["id"], "123")
+        self.assertEqual([request.method for request in requests], ["GET", "POST"])
+
     def test_get_current_user_returns_user_information(self) -> None:
         captured_request: httpx.Request | None = None
 
