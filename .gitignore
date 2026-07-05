@@ -5,9 +5,23 @@ build/
 dist/
 wheels/
 *.egg-info
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # Virtual environments
-.venv
+.venv/
 
-.codex
-.agents
+# Local configuration and secrets
+.env
+.env.*
+
+# Local agent/tool state
+.agents/
+.codex/
+
+# OS/editor files
+.DS_Store
