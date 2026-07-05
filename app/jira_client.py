@@ -94,25 +94,198 @@ class JiraClient:
 
         return self._request("POST", "rest/api/3/search/jql", json=payload)
 
+    def search_all_issues_by_jql(
+        self,
+        jql: str,
+        *,
+        max_results: int = 50,
+        fields: list[str] | None = None,
+        max_requests: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Search Jira issues by JQL across pages, bounded by request count.
+
+        Args:
+            jql: Jira Query Language string to execute.
+            max_results: Maximum number of issues to return per request.
+            fields: Optional issue field IDs or names to include in the response.
+            max_requests: Maximum number of API requests to send.
+
+        Returns:
+            Issue objects from every fetched page.
+        """
+        _validate_max_requests(max_requests)
+
+        issues: list[dict[str, Any]] = []
+        next_page_token: str | None = None
+
+        for _ in range(max_requests):
+            response = self.search_issues_by_jql(
+                jql,
+                max_results=max_results,
+                fields=fields,
+                next_page_token=next_page_token,
+            )
+            page_issues = response.get("issues", [])
+            if not isinstance(page_issues, list):
+                raise JiraAPIError("Jira search response did not include an issues list")
+
+            issues.extend(issue for issue in page_issues if isinstance(issue, dict))
+
+            next_page_token_value = response.get("nextPageToken")
+            next_page_token = (
+                next_page_token_value
+                if isinstance(next_page_token_value, str)
+                and next_page_token_value
+                else None
+            )
+            if response.get("isLast") is True or next_page_token is None:
+                break
+        else:
+            self._logger.warning(
+                "Stopped Jira issue search after max_requests=%s", max_requests
+            )
+
+        return issues
+
+    def count_issues_by_jql(self, jql: str) -> int:
+        """Return Jira's approximate count for a bounded JQL query.
+
+        Args:
+            jql: Jira Query Language string to count.
+
+        Returns:
+            Approximate number of matching issues.
+        """
+        response = self._request(
+            "POST",
+            "rest/api/3/search/approximate-count",
+            json={"jql": jql},
+        )
+        count = response.get("count")
+        if not isinstance(count, int):
+            raise JiraAPIError("Jira count response did not include an integer count")
+
+        return count
+
+    def get_issue(
+        self,
+        issue_id_or_key: str,
+        *,
+        fields: list[str] | None = None,
+        expand: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Fetch a Jira issue by issue ID or key.
+
+        Args:
+            issue_id_or_key: Jira issue ID or issue key, such as ``DEV-123``.
+            fields: Optional issue field IDs or names to include in the response.
+            expand: Optional Jira expand values, such as ``changelog`` or ``renderedFields``.
+
+        Returns:
+            Raw Jira issue response.
+        """
+        params: dict[str, str] = {}
+        if fields is not None:
+            params["fields"] = ",".join(fields)
+        if expand is not None:
+            params["expand"] = ",".join(expand)
+
+        return self._request(
+            "GET",
+            f"rest/api/3/issue/{quote(issue_id_or_key)}",
+            params=params or None,
+        )
+
+    def get_issue_comments(
+        self,
+        issue_id_or_key: str,
+        *,
+        max_results: int = 100,
+        order_by: str | None = None,
+        expand: list[str] | None = None,
+        max_requests: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Fetch issue comments across pages, bounded by request count.
+
+        Args:
+            issue_id_or_key: Jira issue ID or issue key, such as ``DEV-123``.
+            max_results: Maximum number of comments to return per request.
+            order_by: Optional Jira ordering expression, such as ``created``.
+            expand: Optional Jira expand values for comments.
+            max_requests: Maximum number of API requests to send.
+
+        Returns:
+            Comment objects from every fetched page.
+        """
+        _validate_max_requests(max_requests)
+
+        start_at = 0
+        comments: list[dict[str, Any]] = []
+
+        for _ in range(max_requests):
+            params: dict[str, str | int] = {
+                "startAt": start_at,
+                "maxResults": max_results,
+            }
+            if order_by is not None:
+                params["orderBy"] = order_by
+            if expand is not None:
+                params["expand"] = ",".join(expand)
+
+            response = self._request(
+                "GET",
+                f"rest/api/3/issue/{quote(issue_id_or_key)}/comment",
+                params=params,
+            )
+            page_comments = response.get("comments", [])
+            if not isinstance(page_comments, list):
+                raise JiraAPIError(
+                    "Jira comments response did not include a comments list"
+                )
+
+            comments.extend(
+                comment for comment in page_comments if isinstance(comment, dict)
+            )
+
+            total = response.get("total")
+            is_last = response.get("isLast")
+            start_at = int(response.get("startAt", start_at)) + len(page_comments)
+            if (
+                is_last is True
+                or not page_comments
+                or (isinstance(total, int) and start_at >= total)
+            ):
+                break
+        else:
+            self._logger.warning(
+                "Stopped Jira comment fetch after max_requests=%s", max_requests
+            )
+
+        return comments
+
     def get_issue_changelog(
         self,
         issue_id_or_key: str,
         *,
         max_results: int = 100,
+        max_requests: int = 10,
     ) -> list[dict[str, Any]]:
-        """Fetch all changelog history entries for an issue.
+        """Fetch changelog history entries for an issue, bounded by request count.
 
         Args:
             issue_id_or_key: Jira issue ID or issue key, such as ``DEV-123``.
             max_results: Page size used when fetching changelog entries.
+            max_requests: Maximum number of API requests to send.
 
         Returns:
             List of changelog history objects from every fetched page.
         """
+        _validate_max_requests(max_requests)
+
         start_at = 0
         histories: list[dict[str, Any]] = []
 
-        while True:
+        for _ in range(max_requests):
             response = self._request(
                 "GET",
                 f"rest/api/3/issue/{quote(issue_id_or_key)}/changelog",
@@ -135,8 +308,78 @@ class JiraClient:
                 or (isinstance(total, int) and start_at >= total)
             ):
                 break
+        else:
+            self._logger.warning(
+                "Stopped Jira changelog fetch after max_requests=%s", max_requests
+            )
 
         return histories
+
+    def get_bulk_changelogs(
+        self,
+        issue_ids_or_keys: list[str],
+        *,
+        field_ids: list[str] | None = None,
+        max_results: int = 100,
+        max_requests: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Bulk fetch changelogs for multiple issues, bounded by request count.
+
+        Args:
+            issue_ids_or_keys: Jira issue IDs or issue keys to fetch changelogs for.
+            field_ids: Optional field IDs used to filter changelog items.
+            max_results: Maximum number of changelog groups to return per request.
+            max_requests: Maximum number of API requests to send.
+
+        Returns:
+            ``issueChangeLogs`` objects from every fetched page.
+        """
+        _validate_max_requests(max_requests)
+        if not issue_ids_or_keys:
+            return []
+
+        issue_changelogs: list[dict[str, Any]] = []
+        next_page_token: str | None = None
+
+        for _ in range(max_requests):
+            payload: dict[str, Any] = {
+                "issueIdsOrKeys": issue_ids_or_keys,
+                "maxResults": max_results,
+            }
+            if field_ids is not None:
+                payload["fieldIds"] = field_ids
+            if next_page_token is not None:
+                payload["nextPageToken"] = next_page_token
+
+            response = self._request(
+                "POST",
+                "rest/api/3/changelog/bulkfetch",
+                json=payload,
+            )
+            values = response.get("issueChangeLogs", [])
+            if not isinstance(values, list):
+                raise JiraAPIError(
+                    "Jira bulk changelog response did not include an issueChangeLogs list"
+                )
+
+            issue_changelogs.extend(value for value in values if isinstance(value, dict))
+
+            next_page_token_value = response.get("nextPageToken")
+            next_page_token = (
+                next_page_token_value
+                if isinstance(next_page_token_value, str)
+                and next_page_token_value
+                else None
+            )
+            if next_page_token is None:
+                break
+        else:
+            self._logger.warning(
+                "Stopped Jira bulk changelog fetch after max_requests=%s",
+                max_requests,
+            )
+
+        return issue_changelogs
 
     def get_filter(self, filter_id: str | int) -> dict[str, Any]:
         """Fetch a Jira filter by ID.
@@ -326,6 +569,11 @@ def _optional_str(value: object) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _validate_max_requests(max_requests: int) -> None:
+    if max_requests < 1:
+        raise ValueError("max_requests must be at least 1")
 
 
 def _format_gadget_filter_id(filter_id: str | int) -> str:

@@ -82,6 +82,220 @@ class JiraClientTest(unittest.TestCase):
             },
         )
 
+    def test_search_all_issues_by_jql_fetches_pages_until_last(self) -> None:
+        request_payloads: list[dict[str, object]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            payload = json.loads(request.content)
+            request_payloads.append(payload)
+            if "nextPageToken" not in payload:
+                return httpx.Response(
+                    200,
+                    json={
+                        "issues": [{"id": "10001", "key": "DEV-1"}],
+                        "nextPageToken": "next-token",
+                    },
+                )
+
+            return httpx.Response(
+                200,
+                json={
+                    "isLast": True,
+                    "issues": [{"id": "10002", "key": "DEV-2"}],
+                },
+            )
+
+        transport = httpx.MockTransport(handler)
+
+        with JiraClient(
+            base_url="https://example.atlassian.net",
+            email="user@example.com",
+            api_token="token",
+            transport=transport,
+        ) as client:
+            issues = client.search_all_issues_by_jql(
+                "project = DEV",
+                max_results=1,
+                fields=["summary"],
+                max_requests=3,
+            )
+
+        self.assertEqual([issue["key"] for issue in issues], ["DEV-1", "DEV-2"])
+        self.assertEqual(
+            request_payloads,
+            [
+                {
+                    "jql": "project = DEV",
+                    "maxResults": 1,
+                    "fields": ["summary"],
+                },
+                {
+                    "jql": "project = DEV",
+                    "maxResults": 1,
+                    "fields": ["summary"],
+                    "nextPageToken": "next-token",
+                },
+            ],
+        )
+
+    def test_search_all_issues_by_jql_stops_at_max_requests(self) -> None:
+        request_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal request_count
+            request_count += 1
+            return httpx.Response(
+                200,
+                json={
+                    "issues": [{"id": str(request_count), "key": f"DEV-{request_count}"}],
+                    "nextPageToken": f"token-{request_count}",
+                },
+            )
+
+        transport = httpx.MockTransport(handler)
+
+        with JiraClient(
+            base_url="https://example.atlassian.net",
+            email="user@example.com",
+            api_token="token",
+            transport=transport,
+        ) as client:
+            issues = client.search_all_issues_by_jql(
+                "project = DEV",
+                max_results=1,
+                max_requests=2,
+            )
+
+        self.assertEqual(request_count, 2)
+        self.assertEqual([issue["key"] for issue in issues], ["DEV-1", "DEV-2"])
+
+    def test_count_issues_by_jql_returns_count(self) -> None:
+        captured_request: httpx.Request | None = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_request
+            captured_request = request
+            return httpx.Response(200, json={"count": 153})
+
+        transport = httpx.MockTransport(handler)
+
+        with JiraClient(
+            base_url="https://example.atlassian.net",
+            email="user@example.com",
+            api_token="token",
+            transport=transport,
+        ) as client:
+            count = client.count_issues_by_jql("project = DEV")
+
+        self.assertEqual(count, 153)
+        self.assertIsNotNone(captured_request)
+
+        assert captured_request is not None
+        self.assertEqual(captured_request.method, "POST")
+        self.assertEqual(
+            str(captured_request.url),
+            "https://example.atlassian.net/rest/api/3/search/approximate-count",
+        )
+        self.assertEqual(
+            json.loads(captured_request.content),
+            {"jql": "project = DEV"},
+        )
+
+    def test_get_issue_fetches_issue_by_key(self) -> None:
+        captured_request: httpx.Request | None = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_request
+            captured_request = request
+            return httpx.Response(
+                200,
+                json={
+                    "id": "10001",
+                    "key": "DEV-1",
+                    "fields": {
+                        "summary": "Implement report builder",
+                    },
+                },
+            )
+
+        transport = httpx.MockTransport(handler)
+
+        with JiraClient(
+            base_url="https://example.atlassian.net",
+            email="user@example.com",
+            api_token="token",
+            transport=transport,
+        ) as client:
+            issue = client.get_issue(
+                "DEV-1",
+                fields=["summary", "status"],
+                expand=["renderedFields"],
+            )
+
+        self.assertEqual(issue["key"], "DEV-1")
+        self.assertIsNotNone(captured_request)
+
+        assert captured_request is not None
+        self.assertEqual(captured_request.method, "GET")
+        self.assertEqual(
+            str(captured_request.url),
+            "https://example.atlassian.net/rest/api/3/issue/DEV-1?fields=summary%2Cstatus&expand=renderedFields",
+        )
+
+    def test_get_issue_comments_fetches_pages_until_total(self) -> None:
+        requested_urls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requested_urls.append(str(request.url))
+            start_at = request.url.params.get("startAt")
+            if start_at == "0":
+                return httpx.Response(
+                    200,
+                    json={
+                        "startAt": 0,
+                        "maxResults": 1,
+                        "total": 2,
+                        "comments": [{"id": "10001", "body": "first"}],
+                    },
+                )
+
+            return httpx.Response(
+                200,
+                json={
+                    "startAt": 1,
+                    "maxResults": 1,
+                    "total": 2,
+                    "comments": [{"id": "10002", "body": "second"}],
+                },
+            )
+
+        transport = httpx.MockTransport(handler)
+
+        with JiraClient(
+            base_url="https://example.atlassian.net",
+            email="user@example.com",
+            api_token="token",
+            transport=transport,
+        ) as client:
+            comments = client.get_issue_comments(
+                "DEV-123",
+                max_results=1,
+                order_by="created",
+                expand=["renderedBody"],
+                max_requests=3,
+            )
+
+        self.assertEqual([comment["id"] for comment in comments], ["10001", "10002"])
+        self.assertEqual(len(requested_urls), 2)
+        self.assertEqual(
+            requested_urls[0],
+            "https://example.atlassian.net/rest/api/3/issue/DEV-123/comment?startAt=0&maxResults=1&orderBy=created&expand=renderedBody",
+        )
+        self.assertEqual(
+            requested_urls[1],
+            "https://example.atlassian.net/rest/api/3/issue/DEV-123/comment?startAt=1&maxResults=1&orderBy=created&expand=renderedBody",
+        )
+
     def test_get_issue_changelog_fetches_all_pages(self) -> None:
         requested_urls: list[str] = []
 
@@ -131,6 +345,39 @@ class JiraClientTest(unittest.TestCase):
             "https://example.atlassian.net/rest/api/3/issue/DEV-123/changelog?startAt=1&maxResults=1",
         )
 
+    def test_get_issue_changelog_stops_at_max_requests(self) -> None:
+        request_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal request_count
+            request_count += 1
+            return httpx.Response(
+                200,
+                json={
+                    "startAt": request_count - 1,
+                    "maxResults": 1,
+                    "total": 10,
+                    "values": [{"id": str(request_count), "items": []}],
+                },
+            )
+
+        transport = httpx.MockTransport(handler)
+
+        with JiraClient(
+            base_url="https://example.atlassian.net",
+            email="user@example.com",
+            api_token="token",
+            transport=transport,
+        ) as client:
+            changelog = client.get_issue_changelog(
+                "DEV-123",
+                max_results=1,
+                max_requests=2,
+            )
+
+        self.assertEqual(request_count, 2)
+        self.assertEqual([entry["id"] for entry in changelog], ["1", "2"])
+
     def test_get_issue_changelog_raises_for_api_error(self) -> None:
         transport = httpx.MockTransport(
             lambda request: httpx.Response(404, text="issue not found")
@@ -144,6 +391,74 @@ class JiraClientTest(unittest.TestCase):
         ) as client:
             with self.assertRaisesRegex(JiraAPIError, "404 Not Found"):
                 client.get_issue_changelog("DEV-404")
+
+    def test_get_bulk_changelogs_fetches_pages_until_no_next_token(self) -> None:
+        request_payloads: list[dict[str, object]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            payload = json.loads(request.content)
+            request_payloads.append(payload)
+            if "nextPageToken" not in payload:
+                return httpx.Response(
+                    200,
+                    json={
+                        "issueChangeLogs": [
+                            {
+                                "issueId": "10001",
+                                "changeHistories": [{"id": "20001"}],
+                            }
+                        ],
+                        "nextPageToken": "next-token",
+                    },
+                )
+
+            return httpx.Response(
+                200,
+                json={
+                    "issueChangeLogs": [
+                        {
+                            "issueId": "10002",
+                            "changeHistories": [{"id": "20002"}],
+                        }
+                    ],
+                },
+            )
+
+        transport = httpx.MockTransport(handler)
+
+        with JiraClient(
+            base_url="https://example.atlassian.net",
+            email="user@example.com",
+            api_token="token",
+            transport=transport,
+        ) as client:
+            changelogs = client.get_bulk_changelogs(
+                ["DEV-1", "DEV-2"],
+                field_ids=["status"],
+                max_results=1,
+                max_requests=3,
+            )
+
+        self.assertEqual(
+            [changelog["issueId"] for changelog in changelogs],
+            ["10001", "10002"],
+        )
+        self.assertEqual(
+            request_payloads,
+            [
+                {
+                    "issueIdsOrKeys": ["DEV-1", "DEV-2"],
+                    "maxResults": 1,
+                    "fieldIds": ["status"],
+                },
+                {
+                    "issueIdsOrKeys": ["DEV-1", "DEV-2"],
+                    "maxResults": 1,
+                    "fieldIds": ["status"],
+                    "nextPageToken": "next-token",
+                },
+            ],
+        )
 
     def test_update_filter_jql_keeps_existing_name_and_description(self) -> None:
         captured_update: httpx.Request | None = None
