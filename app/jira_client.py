@@ -82,6 +82,15 @@ class JiraClient:
 
         Returns:
             Raw Jira issue search response.
+
+        Reference:
+            https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-search/#api-rest-api-3-search-jql-post
+
+        Permissions:
+            Requires Browse projects permission for matching issue projects, plus
+            issue-level security permission when issue security is configured.
+            OAuth scopes: classic ``read:jira-work``; granular scopes include
+            ``read:issue-details:jira``. Connect scope: ``READ``.
         """
         payload: dict[str, Any] = {
             "jql": jql,
@@ -112,6 +121,12 @@ class JiraClient:
 
         Returns:
             Issue objects from every fetched page.
+
+        Reference:
+            https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-search/#api-rest-api-3-search-jql-post
+
+        Permissions:
+            Same as ``search_issues_by_jql``.
         """
         _validate_max_requests(max_requests)
 
@@ -155,6 +170,15 @@ class JiraClient:
 
         Returns:
             Approximate number of matching issues.
+
+        Reference:
+            https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-search/#api-rest-api-3-search-approximate-count-post
+
+        Permissions:
+            Counts only issues visible through Browse projects permission and
+            issue-level security. OAuth scopes: classic ``read:jira-work``;
+            granular scopes include ``read:issue-details:jira``. Connect scope:
+            ``READ``.
         """
         response = self._request(
             "POST",
@@ -183,6 +207,15 @@ class JiraClient:
 
         Returns:
             Raw Jira issue response.
+
+        Reference:
+            https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issues/#api-rest-api-3-issue-issueidorkey-get
+
+        Permissions:
+            Requires Browse projects permission for the issue project, plus
+            issue-level security permission when issue security is configured.
+            OAuth scopes: classic ``read:jira-work``; granular scopes include
+            ``read:issue-details:jira``. Connect scope: ``READ``.
         """
         params: dict[str, str] = {}
         if fields is not None:
@@ -216,6 +249,16 @@ class JiraClient:
 
         Returns:
             Comment objects from every fetched page.
+
+        Reference:
+            https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-comments/#api-rest-api-3-issue-issueidorkey-comment-get
+
+        Permissions:
+            Requires Browse projects permission, issue-level security permission
+            when configured, and membership in the comment visibility group or
+            role when the comment is restricted. OAuth scopes: classic
+            ``read:jira-work``; granular scopes include ``read:comment:jira``.
+            Connect scope: ``READ``.
         """
         _validate_max_requests(max_requests)
 
@@ -279,6 +322,15 @@ class JiraClient:
 
         Returns:
             List of changelog history objects from every fetched page.
+
+        Reference:
+            https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issues/#api-rest-api-3-issue-issueidorkey-changelog-get
+
+        Permissions:
+            Requires Browse projects permission for the issue project, plus
+            issue-level security permission when issue security is configured.
+            OAuth scopes: classic ``read:jira-work``; granular scopes include
+            ``read:issue.changelog:jira``. Connect scope: ``READ``.
         """
         _validate_max_requests(max_requests)
 
@@ -333,6 +385,16 @@ class JiraClient:
 
         Returns:
             ``issueChangeLogs`` objects from every fetched page.
+
+        Reference:
+            https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issues/#api-rest-api-3-changelog-bulkfetch-post
+
+        Permissions:
+            Requires Browse projects permission for the issue projects, plus
+            issue-level security permission when issue security is configured.
+            OAuth scopes: classic ``read:jira-work``; granular scopes include
+            ``read:issue.changelog:jira``. Connect apps cannot access this
+            resource.
         """
         _validate_max_requests(max_requests)
         if not issue_ids_or_keys:
@@ -389,6 +451,15 @@ class JiraClient:
 
         Returns:
             Raw Jira filter response.
+
+        Reference:
+            https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-filters/#api-rest-api-3-filter-id-get
+
+        Permissions:
+            Returns filters owned by the user or shared with the user through
+            group, project, public project, or public sharing. OAuth scopes:
+            classic ``read:jira-work``; granular scopes include
+            ``read:filter:jira``. Connect scope: ``READ``.
         """
         return self._request(
             "GET", f"rest/api/3/filter/{quote(str(filter_id), safe='')}"
@@ -410,6 +481,14 @@ class JiraClient:
 
         Returns:
             Raw Jira gadget statistics response.
+
+        Reference:
+            No public Atlassian REST API v3 reference was found for this gadget
+            endpoint.
+
+        Permissions:
+            Uses the Jira gadget statistics endpoint; access depends on the
+            filter visibility and the user's issue permissions.
         """
         return self._request(
             "GET",
@@ -443,6 +522,14 @@ class JiraClient:
 
         Returns:
             Raw Jira two-dimensional gadget statistics response.
+
+        Reference:
+            No public Atlassian REST API v3 reference was found for this gadget
+            endpoint.
+
+        Permissions:
+            Uses the Jira gadget statistics endpoint; access depends on the
+            filter visibility and the user's issue permissions.
         """
         return self._request(
             "GET",
@@ -466,6 +553,15 @@ class JiraClient:
 
         Returns:
             Raw Jira filter update response.
+
+        Reference:
+            https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-filters/#api-rest-api-3-filter-id-put
+
+        Permissions:
+            Requires Jira access and ownership of the filter. OAuth scopes:
+            classic ``write:jira-work``; granular scopes include
+            ``write:filter:jira`` and ``read:filter:jira``. Connect scope:
+            ``WRITE``.
         """
         current_filter = self.get_filter(filter_id)
         name = current_filter.get("name")

@@ -70,6 +70,14 @@ class ConfluenceClient:
         Returns:
             Raw Confluence user response. The ``accountId`` value can be used
             for Confluence user mentions in storage-format page content.
+
+        Reference:
+            https://developer.atlassian.com/cloud/confluence/rest/v1/api-group-users/#api-wiki-rest-api-user-current-get
+
+        Permissions:
+            Requires permission to access the Confluence site. OAuth scopes:
+            classic ``read:confluence-user``; granular
+            ``read:content-details:confluence``. Connect scope: ``READ``.
         """
         return self._request("GET", "wiki/rest/api/user/current")
 
@@ -81,6 +89,14 @@ class ConfluenceClient:
 
         Returns:
             Space ID when the key exists, otherwise ``None``.
+
+        Reference:
+            https://developer.atlassian.com/cloud/confluence/rest/v2/api-group-space/#api-spaces-get
+
+        Permissions:
+            Requires permission to access the Confluence site. Only spaces the
+            user can view are returned. OAuth scope:
+            ``read:space:confluence``. Connect scope: ``READ``.
         """
         response = self._request(
             "GET",
@@ -115,6 +131,14 @@ class ConfluenceClient:
 
         Returns:
             Page ID for the first matching page, otherwise ``None``.
+
+        Reference:
+            https://developer.atlassian.com/cloud/confluence/rest/v2/api-group-page/#api-pages-get
+
+        Permissions:
+            Requires permission to access the Confluence site. Only pages the
+            user can view are returned. OAuth scope: ``read:page:confluence``.
+            Connect scope: ``READ``.
         """
         params: dict[str, str | int] = {
             "title": title,
@@ -153,6 +177,13 @@ class ConfluenceClient:
 
         Returns:
             Raw Confluence page response.
+
+        Reference:
+            https://developer.atlassian.com/cloud/confluence/rest/v2/api-group-page/#api-pages-id-get
+
+        Permissions:
+            Requires permission to view the page and its corresponding space.
+            OAuth scope: ``read:page:confluence``. Connect scope: ``READ``.
         """
         params: dict[str, str] | None = None
         if body_format is not None:
@@ -177,6 +208,13 @@ class ConfluenceClient:
         Returns:
             Body value in the requested format, otherwise ``None`` when the
             response does not include that body format.
+
+        Reference:
+            https://developer.atlassian.com/cloud/confluence/rest/v2/api-group-page/#api-pages-id-get
+
+        Permissions:
+            Requires permission to view the page and its corresponding space.
+            OAuth scope: ``read:page:confluence``. Connect scope: ``READ``.
         """
         response = self.get_page(page_id, body_format=body_format)
         body = response.get("body")
@@ -216,6 +254,14 @@ class ConfluenceClient:
 
         Returns:
             Raw Confluence page creation response.
+
+        Reference:
+            https://developer.atlassian.com/cloud/confluence/rest/v2/api-group-page/#api-pages-post
+
+        Permissions:
+            Requires permission to view the corresponding space, and page
+            creation must be allowed in that space. OAuth scope:
+            ``write:page:confluence``. Connect scope: ``WRITE``.
         """
         payload: dict[str, Any] = {
             "spaceId": space_id,
@@ -266,6 +312,13 @@ class ConfluenceClient:
 
         Returns:
             Raw Confluence page update response.
+
+        Reference:
+            https://developer.atlassian.com/cloud/confluence/rest/v2/api-group-page/#api-pages-id-put
+
+        Permissions:
+            Requires permission to view and edit the page. OAuth scope:
+            ``write:page:confluence``. Connect scope: ``WRITE``.
         """
         version: dict[str, Any] = {
             "number": version_number,
@@ -326,6 +379,18 @@ class ConfluenceClient:
 
         Returns:
             Raw Confluence page creation or update response.
+
+        Reference:
+            Uses the Confluence v2 get pages, get page by ID, create page, and
+            update page endpoints:
+            https://developer.atlassian.com/cloud/confluence/rest/v2/api-group-page/
+
+        Permissions:
+            Requires the read permissions used by ``get_page_id_by_title`` and
+            ``get_page``. Creating requires page creation permission in the
+            target space; updating requires permission to edit the existing
+            page. OAuth scopes: ``read:page:confluence`` and
+            ``write:page:confluence``. Connect scopes: ``READ`` and ``WRITE``.
         """
         page_id = self.get_page_id_by_title(title, space_id=space_id)
         if page_id is None:
@@ -374,6 +439,18 @@ class ConfluenceClient:
 
         Returns:
             Existing raw Confluence page response, or the created page response.
+
+        Reference:
+            Uses the Confluence v2 get pages, get page by ID, and create page
+            endpoints:
+            https://developer.atlassian.com/cloud/confluence/rest/v2/api-group-page/
+
+        Permissions:
+            Requires the read permissions used by ``get_page_id_by_title`` and
+            ``get_page``. Creating requires page creation permission in the
+            target space. OAuth scopes: ``read:page:confluence`` and, when
+            creating, ``write:page:confluence``. Connect scopes: ``READ`` and,
+            when creating, ``WRITE``.
         """
         page_id = self.get_page_id_by_title(title, space_id=space_id)
         if page_id is not None:
