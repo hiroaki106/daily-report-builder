@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import logging
 import os
 from datetime import date
 
@@ -9,6 +10,8 @@ from app.confluence_client import ConfluenceClient
 
 
 def main() -> None:
+    configure_logging()
+
     args = parse_args()
     report_date = date.fromisoformat(args.date) if args.date else date.today()
 
@@ -35,6 +38,13 @@ def main() -> None:
     print(f"Created Confluence page: {page.get('id')}")
     if web_url:
         print(web_url)
+
+
+def configure_logging() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
 
 
 def parse_args() -> argparse.Namespace:
