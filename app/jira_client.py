@@ -8,7 +8,6 @@ from urllib.parse import quote, urljoin
 
 import httpx
 
-
 _LOGGER = logging.getLogger(__name__)
 _LOGGER.addHandler(logging.NullHandler())
 
@@ -64,58 +63,17 @@ class JiraClient:
         """Close the client when leaving a context manager block."""
         self.close()
 
-    def search_issues_by_jql(
+    def fetch_issues_by_jql(
         self,
         jql: str,
         *,
-        max_results: int = 50,
         fields: list[str] | None = None,
-        next_page_token: str | None = None,
-    ) -> dict[str, Any]:
-        """Search Jira issues by JQL and return the raw search response.
-
-        Args:
-            jql: Jira Query Language string to execute.
-            max_results: Maximum number of issues to return in this request.
-            fields: Optional issue field IDs or names to include in the response.
-            next_page_token: Token from a previous response for fetching the next page.
-
-        Returns:
-            Raw Jira issue search response.
-
-        Reference:
-            https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-search/#api-rest-api-3-search-jql-post
-
-        Permissions:
-            Requires Browse projects permission for matching issue projects, plus
-            issue-level security permission when issue security is configured.
-            OAuth scopes: classic ``read:jira-work``; granular scopes include
-            ``read:issue-details:jira``. Connect scope: ``READ``.
-        """
-        payload: dict[str, Any] = {
-            "jql": jql,
-            "maxResults": max_results,
-        }
-        if fields is not None:
-            payload["fields"] = fields
-        if next_page_token is not None:
-            payload["nextPageToken"] = next_page_token
-
-        return self._request("POST", "rest/api/3/search/jql", json=payload)
-
-    def search_all_issues_by_jql(
-        self,
-        jql: str,
-        *,
-        max_results: int = 50,
-        fields: list[str] | None = None,
-        max_requests: int = 10,
+        max_requests: int = 50,
     ) -> list[dict[str, Any]]:
         """Search Jira issues by JQL across pages, bounded by request count.
 
         Args:
             jql: Jira Query Language string to execute.
-            max_results: Maximum number of issues to return per request.
             fields: Optional issue field IDs or names to include in the response.
             max_requests: Maximum number of API requests to send.
 
@@ -126,7 +84,7 @@ class JiraClient:
             https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-search/#api-rest-api-3-search-jql-post
 
         Permissions:
-            Same as ``search_issues_by_jql``.
+            Same as the Jira issue search API.
         """
         _validate_max_requests(max_requests)
 
@@ -134,23 +92,23 @@ class JiraClient:
         next_page_token: str | None = None
 
         for _ in range(max_requests):
-            response = self.search_issues_by_jql(
+            response = self._fetch_issue_search_page(
                 jql,
-                max_results=max_results,
                 fields=fields,
                 next_page_token=next_page_token,
             )
             page_issues = response.get("issues", [])
             if not isinstance(page_issues, list):
-                raise JiraAPIError("Jira search response did not include an issues list")
+                raise JiraAPIError(
+                    "Jira search response did not include an issues list"
+                )
 
             issues.extend(issue for issue in page_issues if isinstance(issue, dict))
 
             next_page_token_value = response.get("nextPageToken")
             next_page_token = (
                 next_page_token_value
-                if isinstance(next_page_token_value, str)
-                and next_page_token_value
+                if isinstance(next_page_token_value, str) and next_page_token_value
                 else None
             )
             if response.get("isLast") is True or next_page_token is None:
@@ -191,7 +149,7 @@ class JiraClient:
 
         return count
 
-    def get_issue(
+    def fetch_issue(
         self,
         issue_id_or_key: str,
         *,
@@ -229,7 +187,7 @@ class JiraClient:
             params=params or None,
         )
 
-    def get_issue_comments(
+    def fetch_issue_comments(
         self,
         issue_id_or_key: str,
         *,
@@ -306,7 +264,7 @@ class JiraClient:
 
         return comments
 
-    def get_issue_changelog(
+    def fetch_issue_changelog(
         self,
         issue_id_or_key: str,
         *,
@@ -367,7 +325,7 @@ class JiraClient:
 
         return histories
 
-    def get_bulk_changelogs(
+    def fetch_bulk_issue_changelogs(
         self,
         issue_ids_or_keys: list[str],
         *,
@@ -424,13 +382,14 @@ class JiraClient:
                     "Jira bulk changelog response did not include an issueChangeLogs list"
                 )
 
-            issue_changelogs.extend(value for value in values if isinstance(value, dict))
+            issue_changelogs.extend(
+                value for value in values if isinstance(value, dict)
+            )
 
             next_page_token_value = response.get("nextPageToken")
             next_page_token = (
                 next_page_token_value
-                if isinstance(next_page_token_value, str)
-                and next_page_token_value
+                if isinstance(next_page_token_value, str) and next_page_token_value
                 else None
             )
             if next_page_token is None:
@@ -443,7 +402,7 @@ class JiraClient:
 
         return issue_changelogs
 
-    def get_filter(self, filter_id: str | int) -> dict[str, Any]:
+    def fetch_filter(self, filter_id: str | int) -> dict[str, Any]:
         """Fetch a Jira filter by ID.
 
         Args:
@@ -465,7 +424,47 @@ class JiraClient:
             "GET", f"rest/api/3/filter/{quote(str(filter_id), safe='')}"
         )
 
-    def get_filter_statistics(
+    def update_filter_jql(self, filter_id: str | int, jql: str) -> dict[str, Any]:
+        """Update only the JQL of a Jira filter, preserving its name and description.
+
+        Args:
+            filter_id: Numeric filter ID as an int or string.
+            jql: Replacement JQL expression for the filter.
+
+        Returns:
+            Raw Jira filter update response.
+
+        Reference:
+            https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-filters/#api-rest-api-3-filter-id-put
+
+        Permissions:
+            Requires Jira access and ownership of the filter. OAuth scopes:
+            classic ``write:jira-work``; granular scopes include
+            ``write:filter:jira`` and ``read:filter:jira``. Connect scope:
+            ``WRITE``.
+        """
+        current_filter = self.fetch_filter(filter_id)
+        name = current_filter.get("name")
+        if not isinstance(name, str) or not name:
+            raise JiraAPIError("Jira filter response did not include a filter name")
+
+        payload: dict[str, Any] = {
+            "name": name,
+            "jql": jql,
+        }
+        description = current_filter.get("description")
+        if isinstance(description, str):
+            payload["description"] = description
+
+        updated_filter = self._request(
+            "PUT",
+            f"rest/api/3/filter/{quote(str(filter_id), safe='')}",
+            json=payload,
+        )
+        self._logger.info("Updated Jira filter JQL: filter_id=%s", filter_id)
+        return updated_filter
+
+    def fetch_one_dimensional_filter_statistics(
         self,
         filter_id: str | int,
         stat_type: str,
@@ -494,13 +493,13 @@ class JiraClient:
             "GET",
             "rest/gadget/1.0/statistics",
             params={
-                "filterId": _format_gadget_filter_id(filter_id),
+                "filterId": str(filter_id),
                 "statType": stat_type,
                 "includeResolvedIssues": _bool_param(include_resolved_issues),
             },
         )
 
-    def get_two_dimensional_filter_statistics(
+    def fetch_two_dimensional_filter_statistics(
         self,
         filter_id: str | int,
         *,
@@ -533,7 +532,7 @@ class JiraClient:
         """
         return self._request(
             "GET",
-            "rest/gadget/1.0/twoDimensionalFilterStats/generate",
+            "rest/gadget/1.0/twodimensionalfilterstats/generate",
             params={
                 "filterId": _format_gadget_filter_id(filter_id),
                 "xstattype": x_stat_type,
@@ -544,45 +543,44 @@ class JiraClient:
             },
         )
 
-    def update_filter_jql(self, filter_id: str | int, jql: str) -> dict[str, Any]:
-        """Update only the JQL of a Jira filter, preserving its name and description.
+    def _fetch_issue_search_page(
+        self,
+        jql: str,
+        *,
+        max_results: int = 50,
+        fields: list[str] | None = None,
+        next_page_token: str | None = None,
+    ) -> dict[str, Any]:
+        """Search one page of Jira issues by JQL and return the raw response.
 
         Args:
-            filter_id: Numeric filter ID as an int or string.
-            jql: Replacement JQL expression for the filter.
+            jql: Jira Query Language string to execute.
+            max_results: Maximum number of issues to return in this request.
+            fields: Optional issue field IDs or names to include in the response.
+            next_page_token: Token from a previous response for fetching the next page.
 
         Returns:
-            Raw Jira filter update response.
+            Raw Jira issue search response.
 
         Reference:
-            https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-filters/#api-rest-api-3-filter-id-put
+            https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-search/#api-rest-api-3-search-jql-post
 
         Permissions:
-            Requires Jira access and ownership of the filter. OAuth scopes:
-            classic ``write:jira-work``; granular scopes include
-            ``write:filter:jira`` and ``read:filter:jira``. Connect scope:
-            ``WRITE``.
+            Requires Browse projects permission for matching issue projects, plus
+            issue-level security permission when issue security is configured.
+            OAuth scopes: classic ``read:jira-work``; granular scopes include
+            ``read:issue-details:jira``. Connect scope: ``READ``.
         """
-        current_filter = self.get_filter(filter_id)
-        name = current_filter.get("name")
-        if not isinstance(name, str) or not name:
-            raise JiraAPIError("Jira filter response did not include a filter name")
-
         payload: dict[str, Any] = {
-            "name": name,
             "jql": jql,
+            "maxResults": max_results,
         }
-        description = current_filter.get("description")
-        if isinstance(description, str):
-            payload["description"] = description
+        if fields is not None:
+            payload["fields"] = fields
+        if next_page_token is not None:
+            payload["nextPageToken"] = next_page_token
 
-        updated_filter = self._request(
-            "PUT",
-            f"rest/api/3/filter/{quote(str(filter_id), safe='')}",
-            json=payload,
-        )
-        self._logger.info("Updated Jira filter JQL: filter_id=%s", filter_id)
-        return updated_filter
+        return self._request("POST", "rest/api/3/search/jql", json=payload)
 
     def _request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         """Send an HTTP request and raise a JiraAPIError for unsuccessful responses."""
@@ -613,7 +611,8 @@ def extract_status_changes(
 
     Args:
         changelog: Raw changelog response, ``values``/``histories`` container,
-            or a list of changelog history objects.
+            a bulk changelog item with ``changeHistories``, or a list of
+            changelog history objects.
 
     Returns:
         List of status transition dictionaries with ``from_status``, ``to_status``,
@@ -657,6 +656,10 @@ def _iter_histories(
     histories = changelog.get("histories")
     if isinstance(histories, list):
         return [history for history in histories if isinstance(history, dict)]
+
+    change_histories = changelog.get("changeHistories")
+    if isinstance(change_histories, list):
+        return [history for history in change_histories if isinstance(history, dict)]
 
     return []
 

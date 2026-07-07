@@ -21,7 +21,7 @@ class JiraClientTest(unittest.TestCase):
             transport=transport,
             logger=mock_logger,
         ) as client:
-            client.search_issues_by_jql("project = DEV")
+            client.fetch_issues_by_jql("project = DEV")
 
         mock_logger.debug.assert_called_once_with(
             "Jira API request: %s %s",
@@ -29,7 +29,7 @@ class JiraClientTest(unittest.TestCase):
             "rest/api/3/search/jql",
         )
 
-    def test_search_issues_by_jql_posts_expected_payload(self) -> None:
+    def test_private_fetch_issue_search_page_posts_expected_payload(self) -> None:
         captured_request: httpx.Request | None = None
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -56,7 +56,7 @@ class JiraClientTest(unittest.TestCase):
             api_token="token",
             transport=transport,
         ) as client:
-            result = client.search_issues_by_jql(
+            result = client._fetch_issue_search_page(
                 "project = DEV ORDER BY updated DESC",
                 max_results=10,
                 fields=["summary", "status"],
@@ -82,7 +82,7 @@ class JiraClientTest(unittest.TestCase):
             },
         )
 
-    def test_search_all_issues_by_jql_fetches_pages_until_last(self) -> None:
+    def test_fetch_issues_by_jql_fetches_pages_until_last(self) -> None:
         request_payloads: list[dict[str, object]] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -113,11 +113,9 @@ class JiraClientTest(unittest.TestCase):
             api_token="token",
             transport=transport,
         ) as client:
-            issues = client.search_all_issues_by_jql(
+            issues = client.fetch_issues_by_jql(
                 "project = DEV",
-                max_results=1,
                 fields=["summary"],
-                max_requests=3,
             )
 
         self.assertEqual([issue["key"] for issue in issues], ["DEV-1", "DEV-2"])
@@ -126,19 +124,19 @@ class JiraClientTest(unittest.TestCase):
             [
                 {
                     "jql": "project = DEV",
-                    "maxResults": 1,
+                    "maxResults": 50,
                     "fields": ["summary"],
                 },
                 {
                     "jql": "project = DEV",
-                    "maxResults": 1,
+                    "maxResults": 50,
                     "fields": ["summary"],
                     "nextPageToken": "next-token",
                 },
             ],
         )
 
-    def test_search_all_issues_by_jql_stops_at_max_requests(self) -> None:
+    def test_fetch_issues_by_jql_stops_at_max_requests(self) -> None:
         request_count = 0
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -160,9 +158,8 @@ class JiraClientTest(unittest.TestCase):
             api_token="token",
             transport=transport,
         ) as client:
-            issues = client.search_all_issues_by_jql(
+            issues = client.fetch_issues_by_jql(
                 "project = DEV",
-                max_results=1,
                 max_requests=2,
             )
 
@@ -226,7 +223,7 @@ class JiraClientTest(unittest.TestCase):
             api_token="token",
             transport=transport,
         ) as client:
-            issue = client.get_issue(
+            issue = client.fetch_issue(
                 "DEV-1",
                 fields=["summary", "status"],
                 expand=["renderedFields"],
@@ -242,7 +239,7 @@ class JiraClientTest(unittest.TestCase):
             "https://example.atlassian.net/rest/api/3/issue/DEV-1?fields=summary%2Cstatus&expand=renderedFields",
         )
 
-    def test_get_issue_comments_fetches_pages_until_total(self) -> None:
+    def test_fetch_issue_comments_fetches_pages_until_total(self) -> None:
         requested_urls: list[str] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -277,7 +274,7 @@ class JiraClientTest(unittest.TestCase):
             api_token="token",
             transport=transport,
         ) as client:
-            comments = client.get_issue_comments(
+            comments = client.fetch_issue_comments(
                 "DEV-123",
                 max_results=1,
                 order_by="created",
@@ -296,7 +293,7 @@ class JiraClientTest(unittest.TestCase):
             "https://example.atlassian.net/rest/api/3/issue/DEV-123/comment?startAt=1&maxResults=1&orderBy=created&expand=renderedBody",
         )
 
-    def test_get_issue_changelog_fetches_all_pages(self) -> None:
+    def test_fetch_issue_changelog_fetches_all_pages(self) -> None:
         requested_urls: list[str] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -332,7 +329,7 @@ class JiraClientTest(unittest.TestCase):
             api_token="token",
             transport=transport,
         ) as client:
-            changelog = client.get_issue_changelog("DEV-123", max_results=1)
+            changelog = client.fetch_issue_changelog("DEV-123", max_results=1)
 
         self.assertEqual([entry["id"] for entry in changelog], ["10001", "10002"])
         self.assertEqual(len(requested_urls), 2)
@@ -345,7 +342,7 @@ class JiraClientTest(unittest.TestCase):
             "https://example.atlassian.net/rest/api/3/issue/DEV-123/changelog?startAt=1&maxResults=1",
         )
 
-    def test_get_issue_changelog_stops_at_max_requests(self) -> None:
+    def test_fetch_issue_changelog_stops_at_max_requests(self) -> None:
         request_count = 0
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -369,7 +366,7 @@ class JiraClientTest(unittest.TestCase):
             api_token="token",
             transport=transport,
         ) as client:
-            changelog = client.get_issue_changelog(
+            changelog = client.fetch_issue_changelog(
                 "DEV-123",
                 max_results=1,
                 max_requests=2,
@@ -378,7 +375,7 @@ class JiraClientTest(unittest.TestCase):
         self.assertEqual(request_count, 2)
         self.assertEqual([entry["id"] for entry in changelog], ["1", "2"])
 
-    def test_get_issue_changelog_raises_for_api_error(self) -> None:
+    def test_fetch_issue_changelog_raises_for_api_error(self) -> None:
         transport = httpx.MockTransport(
             lambda request: httpx.Response(404, text="issue not found")
         )
@@ -390,9 +387,9 @@ class JiraClientTest(unittest.TestCase):
             transport=transport,
         ) as client:
             with self.assertRaisesRegex(JiraAPIError, "404 Not Found"):
-                client.get_issue_changelog("DEV-404")
+                client.fetch_issue_changelog("DEV-404")
 
-    def test_get_bulk_changelogs_fetches_pages_until_no_next_token(self) -> None:
+    def test_fetch_bulk_issue_changelogs_fetches_pages_until_no_next_token(self) -> None:
         request_payloads: list[dict[str, object]] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -432,7 +429,7 @@ class JiraClientTest(unittest.TestCase):
             api_token="token",
             transport=transport,
         ) as client:
-            changelogs = client.get_bulk_changelogs(
+            changelogs = client.fetch_bulk_issue_changelogs(
                 ["DEV-1", "DEV-2"],
                 field_ids=["status"],
                 max_results=1,
@@ -574,7 +571,7 @@ class JiraClientTest(unittest.TestCase):
             },
         )
 
-    def test_get_filter_statistics_uses_statistics_endpoint(self) -> None:
+    def test_fetch_one_dimensional_filter_statistics_uses_statistics_endpoint(self) -> None:
         captured_request: httpx.Request | None = None
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -597,7 +594,7 @@ class JiraClientTest(unittest.TestCase):
             api_token="token",
             transport=transport,
         ) as client:
-            result = client.get_filter_statistics(
+            result = client.fetch_one_dimensional_filter_statistics(
                 10000,
                 "statuses",
                 include_resolved_issues=False,
@@ -610,10 +607,10 @@ class JiraClientTest(unittest.TestCase):
         self.assertEqual(captured_request.method, "GET")
         self.assertEqual(
             str(captured_request.url),
-            "https://example.atlassian.net/rest/gadget/1.0/statistics?filterId=filter-10000&statType=statuses&includeResolvedIssues=false",
+            "https://example.atlassian.net/rest/gadget/1.0/statistics?filterId=10000&statType=statuses&includeResolvedIssues=false",
         )
 
-    def test_get_two_dimensional_filter_statistics_uses_generate_endpoint(self) -> None:
+    def test_fetch_two_dimensional_filter_statistics_uses_generate_endpoint(self) -> None:
         captured_request: httpx.Request | None = None
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -637,7 +634,7 @@ class JiraClientTest(unittest.TestCase):
             api_token="token",
             transport=transport,
         ) as client:
-            result = client.get_two_dimensional_filter_statistics(
+            result = client.fetch_two_dimensional_filter_statistics(
                 "filter-10000",
                 x_stat_type="statuses",
                 y_stat_type="assignees",
@@ -653,7 +650,7 @@ class JiraClientTest(unittest.TestCase):
         self.assertEqual(captured_request.method, "GET")
         self.assertEqual(
             str(captured_request.url),
-            "https://example.atlassian.net/rest/gadget/1.0/twoDimensionalFilterStats/generate?filterId=filter-10000&xstattype=statuses&ystattype=assignees&sortBy=total&sortDirection=desc&numberToShow=10",
+            "https://example.atlassian.net/rest/gadget/1.0/twodimensionalfilterstats/generate?filterId=filter-10000&xstattype=statuses&ystattype=assignees&sortBy=total&sortDirection=desc&numberToShow=10",
         )
 
 
@@ -730,6 +727,36 @@ class ExtractStatusChangesTest(unittest.TestCase):
                     "from_status": None,
                     "to_status": "To Do",
                     "changed_at": "2026-06-28T09:00:00.000+0900",
+                }
+            ],
+        )
+
+    def test_extract_status_changes_accepts_bulk_changelog_item(self) -> None:
+        changes = extract_status_changes(
+            {
+                "issueId": "10001",
+                "changeHistories": [
+                    {
+                        "created": "2026-06-28T10:00:00.000+0900",
+                        "items": [
+                            {
+                                "field": "status",
+                                "fromString": "Backlog",
+                                "toString": "Selected for Development",
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(
+            changes,
+            [
+                {
+                    "from_status": "Backlog",
+                    "to_status": "Selected for Development",
+                    "changed_at": "2026-06-28T10:00:00.000+0900",
                 }
             ],
         )
