@@ -8,6 +8,8 @@ from urllib.parse import quote, urljoin
 
 import httpx
 
+from app.browser_cookies import BrowserCookieError, load_chrome_cookies
+
 _LOGGER = logging.getLogger(__name__)
 _LOGGER.addHandler(logging.NullHandler())
 
@@ -22,8 +24,8 @@ class JiraClient:
     def __init__(
         self,
         base_url: str,
-        email: str,
-        api_token: str,
+        email: str | None = None,
+        api_token: str | None = None,
         *,
         timeout: float = 30.0,
         transport: httpx.BaseTransport | None = None,
@@ -34,15 +36,27 @@ class JiraClient:
         Args:
             base_url: Atlassian site URL, such as ``https://example.atlassian.net``.
             email: Atlassian account email used for basic authentication.
-            api_token: Atlassian API token used for basic authentication.
+            api_token: Atlassian API token used for basic authentication. If either
+                credential is missing, Chrome cookies are used instead.
             timeout: Request timeout in seconds.
             transport: Optional httpx transport, mainly used by tests.
             logger: Optional logger. Defaults to this module's logger.
         """
         self._base_url = base_url.rstrip("/") + "/"
         self._logger = logger or _LOGGER
+        auth: tuple[str, str] | None = None
+        cookies = None
+        if email is not None and api_token is not None:
+            auth = (email, api_token)
+        else:
+            try:
+                cookies = load_chrome_cookies(base_url)
+            except BrowserCookieError as exc:
+                raise JiraAPIError(str(exc)) from exc
+
         self._client = httpx.Client(
-            auth=(email, api_token),
+            auth=auth,
+            cookies=cookies,
             headers={
                 "Accept": "application/json",
                 "Content-Type": "application/json",
@@ -325,83 +339,6 @@ class JiraClient:
 
         return histories
 
-    def fetch_bulk_issue_changelogs(
-        self,
-        issue_ids_or_keys: list[str],
-        *,
-        field_ids: list[str] | None = None,
-        max_results: int = 100,
-        max_requests: int = 10,
-    ) -> list[dict[str, Any]]:
-        """Bulk fetch changelogs for multiple issues, bounded by request count.
-
-        Args:
-            issue_ids_or_keys: Jira issue IDs or issue keys to fetch changelogs for.
-            field_ids: Optional field IDs used to filter changelog items.
-            max_results: Maximum number of changelog groups to return per request.
-            max_requests: Maximum number of API requests to send.
-
-        Returns:
-            ``issueChangeLogs`` objects from every fetched page.
-
-        Reference:
-            https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issues/#api-rest-api-3-changelog-bulkfetch-post
-
-        Permissions:
-            Requires Browse projects permission for the issue projects, plus
-            issue-level security permission when issue security is configured.
-            OAuth scopes: classic ``read:jira-work``; granular scopes include
-            ``read:issue.changelog:jira``. Connect apps cannot access this
-            resource.
-        """
-        _validate_max_requests(max_requests)
-        if not issue_ids_or_keys:
-            return []
-
-        issue_changelogs: list[dict[str, Any]] = []
-        next_page_token: str | None = None
-
-        for _ in range(max_requests):
-            payload: dict[str, Any] = {
-                "issueIdsOrKeys": issue_ids_or_keys,
-                "maxResults": max_results,
-            }
-            if field_ids is not None:
-                payload["fieldIds"] = field_ids
-            if next_page_token is not None:
-                payload["nextPageToken"] = next_page_token
-
-            response = self._request(
-                "POST",
-                "rest/api/3/changelog/bulkfetch",
-                json=payload,
-            )
-            values = response.get("issueChangeLogs", [])
-            if not isinstance(values, list):
-                raise JiraAPIError(
-                    "Jira bulk changelog response did not include an issueChangeLogs list"
-                )
-
-            issue_changelogs.extend(
-                value for value in values if isinstance(value, dict)
-            )
-
-            next_page_token_value = response.get("nextPageToken")
-            next_page_token = (
-                next_page_token_value
-                if isinstance(next_page_token_value, str) and next_page_token_value
-                else None
-            )
-            if next_page_token is None:
-                break
-        else:
-            self._logger.warning(
-                "Stopped Jira bulk changelog fetch after max_requests=%s",
-                max_requests,
-            )
-
-        return issue_changelogs
-
     def fetch_filter(self, filter_id: str | int) -> dict[str, Any]:
         """Fetch a Jira filter by ID.
 
@@ -611,8 +548,7 @@ def extract_status_changes(
 
     Args:
         changelog: Raw changelog response, ``values``/``histories`` container,
-            a bulk changelog item with ``changeHistories``, or a list of
-            changelog history objects.
+            or a list of changelog history objects.
 
     Returns:
         List of status transition dictionaries with ``from_status``, ``to_status``,
@@ -656,10 +592,6 @@ def _iter_histories(
     histories = changelog.get("histories")
     if isinstance(histories, list):
         return [history for history in histories if isinstance(history, dict)]
-
-    change_histories = changelog.get("changeHistories")
-    if isinstance(change_histories, list):
-        return [history for history in change_histories if isinstance(history, dict)]
 
     return []
 

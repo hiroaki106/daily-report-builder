@@ -1,6 +1,6 @@
 import json
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import httpx
 
@@ -8,9 +8,45 @@ from app.confluence_data_center_client import (
     ConfluenceDataCenterAPIError,
     ConfluenceDataCenterClient,
 )
+from app.browser_cookies import BrowserCookieError
 
 
 class ConfluenceDataCenterClientTest(unittest.TestCase):
+    @patch("app.confluence_data_center_client.load_chrome_cookies")
+    def test_uses_chrome_cookies_when_either_credential_is_missing(
+        self, load_cookies: Mock
+    ) -> None:
+        load_cookies.return_value = {"session": "cookie-value"}
+        captured_request: httpx.Request | None = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_request
+            captured_request = request
+            return httpx.Response(200, json={"username": "admin"})
+
+        with ConfluenceDataCenterClient(
+            "https://confluence.example.com/confluence", username="admin",
+            transport=httpx.MockTransport(handler)
+        ) as client:
+            client.fetch_current_user()
+
+        load_cookies.assert_called_once_with(
+            "https://confluence.example.com/confluence"
+        )
+        self.assertEqual(captured_request.headers["cookie"], "session=cookie-value")
+        self.assertNotIn("authorization", captured_request.headers)
+
+    @patch("app.confluence_data_center_client.load_chrome_cookies")
+    def test_raises_api_error_when_chrome_cookies_cannot_be_loaded(
+        self, load_cookies: Mock
+    ) -> None:
+        load_cookies.side_effect = BrowserCookieError("cookie load failed")
+
+        with self.assertRaisesRegex(
+            ConfluenceDataCenterAPIError, "cookie load failed"
+        ):
+            ConfluenceDataCenterClient("https://confluence.example.com/confluence")
+
     def test_logs_request_when_logger_is_provided(self) -> None:
         mock_logger = Mock()
         transport = httpx.MockTransport(
@@ -24,7 +60,7 @@ class ConfluenceDataCenterClientTest(unittest.TestCase):
             transport=transport,
             logger=mock_logger,
         ) as client:
-            client.get_current_user()
+            client.fetch_current_user()
 
         mock_logger.debug.assert_called_once_with(
             "Confluence Data Center API request: %s %s",
@@ -32,7 +68,7 @@ class ConfluenceDataCenterClientTest(unittest.TestCase):
             "rest/api/user/current",
         )
 
-    def test_get_current_user_returns_user_information(self) -> None:
+    def test_fetch_current_user_returns_user_information(self) -> None:
         captured_request: httpx.Request | None = None
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -54,7 +90,7 @@ class ConfluenceDataCenterClientTest(unittest.TestCase):
             password="password",
             transport=transport,
         ) as client:
-            user = client.get_current_user()
+            user = client.fetch_current_user()
 
         self.assertEqual(user["username"], "admin")
         self.assertIsNotNone(captured_request)
@@ -66,7 +102,7 @@ class ConfluenceDataCenterClientTest(unittest.TestCase):
             "https://confluence.example.com/confluence/rest/api/user/current",
         )
 
-    def test_get_space_id_by_key_returns_space_id(self) -> None:
+    def test_fetch_space_id_by_key_returns_space_id(self) -> None:
         captured_request: httpx.Request | None = None
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -89,7 +125,7 @@ class ConfluenceDataCenterClientTest(unittest.TestCase):
             password="password",
             transport=transport,
         ) as client:
-            space_id = client.get_space_id_by_key("DEV")
+            space_id = client.fetch_space_id_by_key("DEV")
 
         self.assertEqual(space_id, "4030468")
         self.assertIsNotNone(captured_request)
@@ -100,7 +136,7 @@ class ConfluenceDataCenterClientTest(unittest.TestCase):
             "https://confluence.example.com/confluence/rest/api/space/DEV",
         )
 
-    def test_get_page_id_by_title_returns_first_matching_page_id(self) -> None:
+    def test_fetch_page_id_by_title_returns_first_matching_page_id(self) -> None:
         captured_request: httpx.Request | None = None
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -126,7 +162,7 @@ class ConfluenceDataCenterClientTest(unittest.TestCase):
             password="password",
             transport=transport,
         ) as client:
-            page_id = client.get_page_id_by_title(
+            page_id = client.fetch_page_id_by_title(
                 "Daily Report",
                 space_key="DEV",
             )
@@ -141,7 +177,7 @@ class ConfluenceDataCenterClientTest(unittest.TestCase):
             "https://confluence.example.com/confluence/rest/api/content?title=Daily+Report&type=page&limit=1&spaceKey=DEV",
         )
 
-    def test_get_page_id_by_title_returns_none_when_not_found(self) -> None:
+    def test_fetch_page_id_by_title_returns_none_when_not_found(self) -> None:
         transport = httpx.MockTransport(
             lambda request: httpx.Response(200, json={"results": []})
         )
@@ -152,9 +188,9 @@ class ConfluenceDataCenterClientTest(unittest.TestCase):
             password="password",
             transport=transport,
         ) as client:
-            self.assertIsNone(client.get_page_id_by_title("Missing Page"))
+            self.assertIsNone(client.fetch_page_id_by_title("Missing Page"))
 
-    def test_get_page_returns_raw_page(self) -> None:
+    def test_fetch_page_returns_raw_page(self) -> None:
         captured_request: httpx.Request | None = None
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -177,7 +213,7 @@ class ConfluenceDataCenterClientTest(unittest.TestCase):
             password="password",
             transport=transport,
         ) as client:
-            page = client.get_page("123", body_format="storage")
+            page = client.fetch_page("123", body_format="storage")
 
         self.assertEqual(page["id"], "123")
         self.assertEqual(page["version"]["number"], 4)
@@ -190,7 +226,7 @@ class ConfluenceDataCenterClientTest(unittest.TestCase):
             "https://confluence.example.com/confluence/rest/api/content/123?expand=body.storage%2Cversion%2Cspace",
         )
 
-    def test_get_page_content_returns_body_value(self) -> None:
+    def test_fetch_page_content_returns_body_value(self) -> None:
         captured_request: httpx.Request | None = None
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -217,7 +253,7 @@ class ConfluenceDataCenterClientTest(unittest.TestCase):
             password="password",
             transport=transport,
         ) as client:
-            content = client.get_page_content("123")
+            content = client.fetch_page_content("123")
 
         self.assertEqual(content, "<p>Daily report body</p>")
         self.assertIsNotNone(captured_request)
@@ -492,7 +528,7 @@ class ConfluenceDataCenterClientTest(unittest.TestCase):
         self.assertEqual(page["id"], "123")
         self.assertEqual([request.method for request in requests], ["GET", "POST"])
 
-    def test_get_or_create_page_returns_existing_page_without_updating(self) -> None:
+    def test_fetch_or_create_page_returns_existing_page_without_updating(self) -> None:
         requests: list[httpx.Request] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -527,7 +563,7 @@ class ConfluenceDataCenterClientTest(unittest.TestCase):
             password="password",
             transport=transport,
         ) as client:
-            page = client.get_or_create_page(
+            page = client.fetch_or_create_page(
                 space_key="DEV",
                 parent_id="456",
                 title="Daily Report",
@@ -541,7 +577,7 @@ class ConfluenceDataCenterClientTest(unittest.TestCase):
             "https://confluence.example.com/confluence/rest/api/content/123?expand=body.storage%2Cversion%2Cspace",
         )
 
-    def test_get_or_create_page_creates_when_missing(self) -> None:
+    def test_fetch_or_create_page_creates_when_missing(self) -> None:
         requests: list[httpx.Request] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -565,7 +601,7 @@ class ConfluenceDataCenterClientTest(unittest.TestCase):
             password="password",
             transport=transport,
         ) as client:
-            page = client.get_or_create_page(
+            page = client.fetch_or_create_page(
                 space_key="DEV",
                 parent_id="456",
                 title="Daily Report",

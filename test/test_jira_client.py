@@ -1,13 +1,45 @@
 import unittest
 import json
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import httpx
 
 from app.jira_client import JiraAPIError, JiraClient, extract_status_changes
+from app.browser_cookies import BrowserCookieError
 
 
 class JiraClientTest(unittest.TestCase):
+    @patch("app.jira_client.load_chrome_cookies")
+    def test_uses_chrome_cookies_when_either_credential_is_missing(
+        self, load_cookies: Mock
+    ) -> None:
+        load_cookies.return_value = {"session": "cookie-value"}
+        captured_request: httpx.Request | None = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_request
+            captured_request = request
+            return httpx.Response(200, json={"count": 0})
+
+        with JiraClient(
+            "https://example.atlassian.net", email="user@example.com",
+            transport=httpx.MockTransport(handler)
+        ) as client:
+            client.count_issues_by_jql("project = DEV")
+
+        load_cookies.assert_called_once_with("https://example.atlassian.net")
+        self.assertEqual(captured_request.headers["cookie"], "session=cookie-value")
+        self.assertNotIn("authorization", captured_request.headers)
+
+    @patch("app.jira_client.load_chrome_cookies")
+    def test_raises_api_error_when_chrome_cookies_cannot_be_loaded(
+        self, load_cookies: Mock
+    ) -> None:
+        load_cookies.side_effect = BrowserCookieError("cookie load failed")
+
+        with self.assertRaisesRegex(JiraAPIError, "cookie load failed"):
+            JiraClient("https://example.atlassian.net")
+
     def test_logs_request_when_logger_is_provided(self) -> None:
         mock_logger = Mock()
         transport = httpx.MockTransport(
@@ -389,74 +421,6 @@ class JiraClientTest(unittest.TestCase):
             with self.assertRaisesRegex(JiraAPIError, "404 Not Found"):
                 client.fetch_issue_changelog("DEV-404")
 
-    def test_fetch_bulk_issue_changelogs_fetches_pages_until_no_next_token(self) -> None:
-        request_payloads: list[dict[str, object]] = []
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            payload = json.loads(request.content)
-            request_payloads.append(payload)
-            if "nextPageToken" not in payload:
-                return httpx.Response(
-                    200,
-                    json={
-                        "issueChangeLogs": [
-                            {
-                                "issueId": "10001",
-                                "changeHistories": [{"id": "20001"}],
-                            }
-                        ],
-                        "nextPageToken": "next-token",
-                    },
-                )
-
-            return httpx.Response(
-                200,
-                json={
-                    "issueChangeLogs": [
-                        {
-                            "issueId": "10002",
-                            "changeHistories": [{"id": "20002"}],
-                        }
-                    ],
-                },
-            )
-
-        transport = httpx.MockTransport(handler)
-
-        with JiraClient(
-            base_url="https://example.atlassian.net",
-            email="user@example.com",
-            api_token="token",
-            transport=transport,
-        ) as client:
-            changelogs = client.fetch_bulk_issue_changelogs(
-                ["DEV-1", "DEV-2"],
-                field_ids=["status"],
-                max_results=1,
-                max_requests=3,
-            )
-
-        self.assertEqual(
-            [changelog["issueId"] for changelog in changelogs],
-            ["10001", "10002"],
-        )
-        self.assertEqual(
-            request_payloads,
-            [
-                {
-                    "issueIdsOrKeys": ["DEV-1", "DEV-2"],
-                    "maxResults": 1,
-                    "fieldIds": ["status"],
-                },
-                {
-                    "issueIdsOrKeys": ["DEV-1", "DEV-2"],
-                    "maxResults": 1,
-                    "fieldIds": ["status"],
-                    "nextPageToken": "next-token",
-                },
-            ],
-        )
-
     def test_update_filter_jql_keeps_existing_name_and_description(self) -> None:
         captured_update: httpx.Request | None = None
         mock_logger = Mock()
@@ -730,37 +694,6 @@ class ExtractStatusChangesTest(unittest.TestCase):
                 }
             ],
         )
-
-    def test_extract_status_changes_accepts_bulk_changelog_item(self) -> None:
-        changes = extract_status_changes(
-            {
-                "issueId": "10001",
-                "changeHistories": [
-                    {
-                        "created": "2026-06-28T10:00:00.000+0900",
-                        "items": [
-                            {
-                                "field": "status",
-                                "fromString": "Backlog",
-                                "toString": "Selected for Development",
-                            }
-                        ],
-                    }
-                ],
-            }
-        )
-
-        self.assertEqual(
-            changes,
-            [
-                {
-                    "from_status": "Backlog",
-                    "to_status": "Selected for Development",
-                    "changed_at": "2026-06-28T10:00:00.000+0900",
-                }
-            ],
-        )
-
 
 if __name__ == "__main__":
     unittest.main()

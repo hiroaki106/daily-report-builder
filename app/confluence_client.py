@@ -8,6 +8,8 @@ from urllib.parse import quote, urljoin
 
 import httpx
 
+from app.browser_cookies import BrowserCookieError, load_chrome_cookies
+
 
 _LOGGER = logging.getLogger(__name__)
 _LOGGER.addHandler(logging.NullHandler())
@@ -23,8 +25,8 @@ class ConfluenceClient:
     def __init__(
         self,
         base_url: str,
-        email: str,
-        api_token: str,
+        email: str | None = None,
+        api_token: str | None = None,
         *,
         timeout: float = 30.0,
         transport: httpx.BaseTransport | None = None,
@@ -35,15 +37,27 @@ class ConfluenceClient:
         Args:
             base_url: Atlassian site URL, such as ``https://example.atlassian.net``.
             email: Atlassian account email used for basic authentication.
-            api_token: Atlassian API token used for basic authentication.
+            api_token: Atlassian API token used for basic authentication. If either
+                credential is missing, Chrome cookies are used instead.
             timeout: Request timeout in seconds.
             transport: Optional httpx transport, mainly used by tests.
             logger: Optional logger. Defaults to this module's logger.
         """
         self._base_url = base_url.rstrip("/") + "/"
         self._logger = logger or _LOGGER
+        auth: tuple[str, str] | None = None
+        cookies = None
+        if email is not None and api_token is not None:
+            auth = (email, api_token)
+        else:
+            try:
+                cookies = load_chrome_cookies(base_url)
+            except BrowserCookieError as exc:
+                raise ConfluenceAPIError(str(exc)) from exc
+
         self._client = httpx.Client(
-            auth=(email, api_token),
+            auth=auth,
+            cookies=cookies,
             headers={
                 "Accept": "application/json",
                 "Content-Type": "application/json",
@@ -64,7 +78,7 @@ class ConfluenceClient:
         """Close the client when leaving a context manager block."""
         self.close()
 
-    def get_current_user(self) -> dict[str, Any]:
+    def fetch_current_user(self) -> dict[str, Any]:
         """Fetch the currently authenticated Confluence user.
 
         Returns:
@@ -81,7 +95,7 @@ class ConfluenceClient:
         """
         return self._request("GET", "wiki/rest/api/user/current")
 
-    def get_space_id_by_key(self, key: str) -> str | None:
+    def fetch_space_id_by_key(self, key: str) -> str | None:
         """Fetch a Confluence space ID by space key.
 
         Args:
@@ -117,7 +131,7 @@ class ConfluenceClient:
 
         return None
 
-    def get_page_id_by_title(
+    def fetch_page_id_by_title(
         self,
         title: str,
         *,
@@ -162,7 +176,7 @@ class ConfluenceClient:
 
         return None
 
-    def get_page(
+    def fetch_page(
         self,
         page_id: str | int,
         *,
@@ -195,7 +209,7 @@ class ConfluenceClient:
             params=params,
         )
 
-    def get_page_content(
+    def fetch_page_content(
         self, page_id: str | int, *, body_format: str = "storage"
     ) -> str | None:
         """Fetch a Confluence page body value in the requested body format.
@@ -216,7 +230,7 @@ class ConfluenceClient:
             Requires permission to view the page and its corresponding space.
             OAuth scope: ``read:page:confluence``. Connect scope: ``READ``.
         """
-        response = self.get_page(page_id, body_format=body_format)
+        response = self.fetch_page(page_id, body_format=body_format)
         body = response.get("body")
         if not isinstance(body, dict):
             return None
@@ -392,7 +406,7 @@ class ConfluenceClient:
             page. OAuth scopes: ``read:page:confluence`` and
             ``write:page:confluence``. Connect scopes: ``READ`` and ``WRITE``.
         """
-        page_id = self.get_page_id_by_title(title, space_id=space_id)
+        page_id = self.fetch_page_id_by_title(title, space_id=space_id)
         if page_id is None:
             return self.create_page(
                 space_id=space_id,
@@ -403,7 +417,7 @@ class ConfluenceClient:
                 representation=representation,
             )
 
-        page = self.get_page(page_id, body_format=representation)
+        page = self.fetch_page(page_id, body_format=representation)
         version_number = _page_version_number(page) + 1
         return self.update_page(
             page_id,
@@ -417,7 +431,7 @@ class ConfluenceClient:
             minor_edit=minor_edit,
         )
 
-    def get_or_create_page(
+    def fetch_or_create_page(
         self,
         *,
         space_id: str,
@@ -452,9 +466,9 @@ class ConfluenceClient:
             creating, ``write:page:confluence``. Connect scopes: ``READ`` and,
             when creating, ``WRITE``.
         """
-        page_id = self.get_page_id_by_title(title, space_id=space_id)
+        page_id = self.fetch_page_id_by_title(title, space_id=space_id)
         if page_id is not None:
-            return self.get_page(page_id, body_format=representation)
+            return self.fetch_page(page_id, body_format=representation)
 
         return self.create_page(
             space_id=space_id,

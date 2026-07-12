@@ -8,6 +8,8 @@ from urllib.parse import quote, urljoin
 
 import httpx
 
+from app.browser_cookies import BrowserCookieError, load_chrome_cookies
+
 
 _LOGGER = logging.getLogger(__name__)
 _LOGGER.addHandler(logging.NullHandler())
@@ -23,8 +25,8 @@ class ConfluenceDataCenterClient:
     def __init__(
         self,
         base_url: str,
-        username: str,
-        password: str,
+        username: str | None = None,
+        password: str | None = None,
         *,
         timeout: float = 30.0,
         transport: httpx.BaseTransport | None = None,
@@ -38,14 +40,26 @@ class ConfluenceDataCenterClient:
                 ``https://example.com/confluence``.
             username: Confluence username used for basic authentication.
             password: Confluence password or API token used for basic authentication.
+                If either credential is missing, Chrome cookies are used instead.
             timeout: Request timeout in seconds.
             transport: Optional httpx transport, mainly used by tests.
             logger: Optional logger. Defaults to this module's logger.
         """
         self._base_url = base_url.rstrip("/") + "/"
         self._logger = logger or _LOGGER
+        auth: tuple[str, str] | None = None
+        cookies = None
+        if username is not None and password is not None:
+            auth = (username, password)
+        else:
+            try:
+                cookies = load_chrome_cookies(base_url)
+            except BrowserCookieError as exc:
+                raise ConfluenceDataCenterAPIError(str(exc)) from exc
+
         self._client = httpx.Client(
-            auth=(username, password),
+            auth=auth,
+            cookies=cookies,
             headers={
                 "Accept": "application/json",
                 "Content-Type": "application/json",
@@ -66,7 +80,7 @@ class ConfluenceDataCenterClient:
         """Close the client when leaving a context manager block."""
         self.close()
 
-    def get_current_user(self) -> dict[str, Any]:
+    def fetch_current_user(self) -> dict[str, Any]:
         """Fetch the currently authenticated Confluence user.
 
         Returns:
@@ -81,7 +95,7 @@ class ConfluenceDataCenterClient:
         """
         return self._request("GET", "rest/api/user/current")
 
-    def get_space_id_by_key(self, key: str) -> str | None:
+    def fetch_space_id_by_key(self, key: str) -> str | None:
         """Fetch a Confluence space ID by space key.
 
         Args:
@@ -106,7 +120,7 @@ class ConfluenceDataCenterClient:
 
         return None
 
-    def get_page_id_by_title(
+    def fetch_page_id_by_title(
         self,
         title: str,
         *,
@@ -153,7 +167,7 @@ class ConfluenceDataCenterClient:
 
         return None
 
-    def get_page(
+    def fetch_page(
         self,
         page_id: str | int,
         *,
@@ -186,7 +200,7 @@ class ConfluenceDataCenterClient:
             params=params,
         )
 
-    def get_page_content(
+    def fetch_page_content(
         self, page_id: str | int, *, body_format: str = "storage"
     ) -> str | None:
         """Fetch a Confluence page body value in the requested body format.
@@ -207,7 +221,7 @@ class ConfluenceDataCenterClient:
             Requires permission to view the page. Data Center REST endpoints use
             the permissions of the authenticated user.
         """
-        response = self.get_page(page_id, body_format=body_format)
+        response = self.fetch_page(page_id, body_format=body_format)
         body = response.get("body")
         if not isinstance(body, dict):
             return None
@@ -388,7 +402,7 @@ class ConfluenceDataCenterClient:
             Data Center REST endpoints use the permissions of the authenticated
             user.
         """
-        page_id = self.get_page_id_by_title(title, space_key=space_key)
+        page_id = self.fetch_page_id_by_title(title, space_key=space_key)
         if page_id is None:
             return self.create_page(
                 space_key=space_key,
@@ -399,7 +413,7 @@ class ConfluenceDataCenterClient:
                 representation=representation,
             )
 
-        page = self.get_page(page_id, body_format=representation)
+        page = self.fetch_page(page_id, body_format=representation)
         version_number = _page_version_number(page) + 1
         return self.update_page(
             page_id,
@@ -414,7 +428,7 @@ class ConfluenceDataCenterClient:
             minor_edit=minor_edit,
         )
 
-    def get_or_create_page(
+    def fetch_or_create_page(
         self,
         *,
         space_key: str,
@@ -445,9 +459,9 @@ class ConfluenceDataCenterClient:
             Requires permission to view or create the relevant pages. Data Center
             REST endpoints use the permissions of the authenticated user.
         """
-        page_id = self.get_page_id_by_title(title, space_key=space_key)
+        page_id = self.fetch_page_id_by_title(title, space_key=space_key)
         if page_id is not None:
-            return self.get_page(page_id, body_format=representation)
+            return self.fetch_page(page_id, body_format=representation)
 
         return self.create_page(
             space_key=space_key,

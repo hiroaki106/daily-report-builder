@@ -1,13 +1,45 @@
 import json
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import httpx
 
 from app.confluence_client import ConfluenceAPIError, ConfluenceClient
+from app.browser_cookies import BrowserCookieError
 
 
 class ConfluenceClientTest(unittest.TestCase):
+    @patch("app.confluence_client.load_chrome_cookies")
+    def test_uses_chrome_cookies_when_either_credential_is_missing(
+        self, load_cookies: Mock
+    ) -> None:
+        load_cookies.return_value = {"session": "cookie-value"}
+        captured_request: httpx.Request | None = None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_request
+            captured_request = request
+            return httpx.Response(200, json={"accountId": "abc123"})
+
+        with ConfluenceClient(
+            "https://example.atlassian.net", api_token="token",
+            transport=httpx.MockTransport(handler)
+        ) as client:
+            client.fetch_current_user()
+
+        load_cookies.assert_called_once_with("https://example.atlassian.net")
+        self.assertEqual(captured_request.headers["cookie"], "session=cookie-value")
+        self.assertNotIn("authorization", captured_request.headers)
+
+    @patch("app.confluence_client.load_chrome_cookies")
+    def test_raises_api_error_when_chrome_cookies_cannot_be_loaded(
+        self, load_cookies: Mock
+    ) -> None:
+        load_cookies.side_effect = BrowserCookieError("cookie load failed")
+
+        with self.assertRaisesRegex(ConfluenceAPIError, "cookie load failed"):
+            ConfluenceClient("https://example.atlassian.net")
+
     def test_logs_request_when_logger_is_provided(self) -> None:
         mock_logger = Mock()
         transport = httpx.MockTransport(
@@ -21,7 +53,7 @@ class ConfluenceClientTest(unittest.TestCase):
             transport=transport,
             logger=mock_logger,
         ) as client:
-            client.get_current_user()
+            client.fetch_current_user()
 
         mock_logger.debug.assert_called_once_with(
             "Confluence API request: %s %s",
@@ -111,7 +143,7 @@ class ConfluenceClientTest(unittest.TestCase):
                     body="<p>done</p>",
                 )
 
-    def test_get_page_id_by_title_returns_first_matching_page_id(self) -> None:
+    def test_fetch_page_id_by_title_returns_first_matching_page_id(self) -> None:
         captured_request: httpx.Request | None = None
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -137,7 +169,7 @@ class ConfluenceClientTest(unittest.TestCase):
             api_token="token",
             transport=transport,
         ) as client:
-            page_id = client.get_page_id_by_title(
+            page_id = client.fetch_page_id_by_title(
                 "Daily Report",
                 space_id="SPACE123",
             )
@@ -152,7 +184,7 @@ class ConfluenceClientTest(unittest.TestCase):
             "https://example.atlassian.net/wiki/api/v2/pages?title=Daily+Report&limit=1&space-id=SPACE123",
         )
 
-    def test_get_page_id_by_title_returns_none_when_not_found(self) -> None:
+    def test_fetch_page_id_by_title_returns_none_when_not_found(self) -> None:
         transport = httpx.MockTransport(
             lambda request: httpx.Response(200, json={"results": []})
         )
@@ -163,9 +195,9 @@ class ConfluenceClientTest(unittest.TestCase):
             api_token="token",
             transport=transport,
         ) as client:
-            self.assertIsNone(client.get_page_id_by_title("Missing Page"))
+            self.assertIsNone(client.fetch_page_id_by_title("Missing Page"))
 
-    def test_get_page_content_returns_body_value(self) -> None:
+    def test_fetch_page_content_returns_body_value(self) -> None:
         captured_request: httpx.Request | None = None
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -192,7 +224,7 @@ class ConfluenceClientTest(unittest.TestCase):
             api_token="token",
             transport=transport,
         ) as client:
-            content = client.get_page_content("123")
+            content = client.fetch_page_content("123")
 
         self.assertEqual(content, "<p>Daily report body</p>")
         self.assertIsNotNone(captured_request)
@@ -204,7 +236,7 @@ class ConfluenceClientTest(unittest.TestCase):
             "https://example.atlassian.net/wiki/api/v2/pages/123?body-format=storage",
         )
 
-    def test_get_page_returns_raw_page(self) -> None:
+    def test_fetch_page_returns_raw_page(self) -> None:
         captured_request: httpx.Request | None = None
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -227,7 +259,7 @@ class ConfluenceClientTest(unittest.TestCase):
             api_token="token",
             transport=transport,
         ) as client:
-            page = client.get_page("123", body_format="storage")
+            page = client.fetch_page("123", body_format="storage")
 
         self.assertEqual(page["id"], "123")
         self.assertEqual(page["version"]["number"], 4)
@@ -411,7 +443,7 @@ class ConfluenceClientTest(unittest.TestCase):
         self.assertEqual(page["id"], "123")
         self.assertEqual([request.method for request in requests], ["GET", "POST"])
 
-    def test_get_or_create_page_returns_existing_page_without_updating(self) -> None:
+    def test_fetch_or_create_page_returns_existing_page_without_updating(self) -> None:
         requests: list[httpx.Request] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -446,7 +478,7 @@ class ConfluenceClientTest(unittest.TestCase):
             api_token="token",
             transport=transport,
         ) as client:
-            page = client.get_or_create_page(
+            page = client.fetch_or_create_page(
                 space_id="SPACE123",
                 parent_id="PARENT123",
                 title="Daily Report",
@@ -460,7 +492,7 @@ class ConfluenceClientTest(unittest.TestCase):
             "https://example.atlassian.net/wiki/api/v2/pages/123?body-format=storage",
         )
 
-    def test_get_or_create_page_creates_when_missing(self) -> None:
+    def test_fetch_or_create_page_creates_when_missing(self) -> None:
         requests: list[httpx.Request] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -484,7 +516,7 @@ class ConfluenceClientTest(unittest.TestCase):
             api_token="token",
             transport=transport,
         ) as client:
-            page = client.get_or_create_page(
+            page = client.fetch_or_create_page(
                 space_id="SPACE123",
                 parent_id="PARENT123",
                 title="Daily Report",
@@ -494,7 +526,7 @@ class ConfluenceClientTest(unittest.TestCase):
         self.assertEqual(page["id"], "123")
         self.assertEqual([request.method for request in requests], ["GET", "POST"])
 
-    def test_get_current_user_returns_user_information(self) -> None:
+    def test_fetch_current_user_returns_user_information(self) -> None:
         captured_request: httpx.Request | None = None
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -517,7 +549,7 @@ class ConfluenceClientTest(unittest.TestCase):
             api_token="token",
             transport=transport,
         ) as client:
-            user = client.get_current_user()
+            user = client.fetch_current_user()
 
         self.assertEqual(user["accountId"], "abc123")
         self.assertEqual(user["displayName"], "Current User")
@@ -530,7 +562,7 @@ class ConfluenceClientTest(unittest.TestCase):
             "https://example.atlassian.net/wiki/rest/api/user/current",
         )
 
-    def test_get_space_id_by_key_returns_matching_space_id(self) -> None:
+    def test_fetch_space_id_by_key_returns_matching_space_id(self) -> None:
         captured_request: httpx.Request | None = None
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -557,7 +589,7 @@ class ConfluenceClientTest(unittest.TestCase):
             api_token="token",
             transport=transport,
         ) as client:
-            space_id = client.get_space_id_by_key("DEV")
+            space_id = client.fetch_space_id_by_key("DEV")
 
         self.assertEqual(space_id, "222")
         self.assertIsNotNone(captured_request)
@@ -568,7 +600,7 @@ class ConfluenceClientTest(unittest.TestCase):
             "https://example.atlassian.net/wiki/api/v2/spaces?keys=DEV&limit=1",
         )
 
-    def test_get_space_id_by_key_returns_none_when_not_found(self) -> None:
+    def test_fetch_space_id_by_key_returns_none_when_not_found(self) -> None:
         transport = httpx.MockTransport(
             lambda request: httpx.Response(
                 200,
@@ -582,7 +614,7 @@ class ConfluenceClientTest(unittest.TestCase):
             api_token="token",
             transport=transport,
         ) as client:
-            self.assertIsNone(client.get_space_id_by_key("DEV"))
+            self.assertIsNone(client.fetch_space_id_by_key("DEV"))
 
 
 if __name__ == "__main__":
