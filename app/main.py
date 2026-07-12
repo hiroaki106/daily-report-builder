@@ -4,9 +4,16 @@ import argparse
 import html
 import logging
 import os
-from datetime import date
+from datetime import date, datetime
+from typing import TypedDict
 
 from app.confluence_client import ConfluenceClient
+
+
+class StatusChange(TypedDict):
+    from_status: str | None
+    to_status: str | None
+    changed_at: str | None
 
 
 def main() -> None:
@@ -16,8 +23,8 @@ def main() -> None:
     report_date = date.fromisoformat(args.date) if args.date else date.today()
 
     base_url = require_env("CONFLUENCE_BASE_URL")
-    email = require_env("CONFLUENCE_EMAIL")
-    api_token = require_env("CONFLUENCE_API_TOKEN")
+    email = os.getenv("CONFLUENCE_EMAIL")
+    api_token = os.getenv("CONFLUENCE_API_TOKEN")
     space_id = require_env("CONFLUENCE_SPACE_ID")
     parent_id = args.parent_id or require_env("CONFLUENCE_PARENT_ID")
 
@@ -74,6 +81,56 @@ def require_env(name: str) -> str:
     if not value:
         raise RuntimeError(f"Missing required environment variable: {name}")
     return value
+
+
+def find_first_status_change(
+    status_changes: list[StatusChange], status: str
+) -> StatusChange | None:
+    """Return the earliest transition to the specified Jira status."""
+    matching_changes = (
+        change
+        for change in status_changes
+        if change["to_status"] == status and change["changed_at"] is not None
+    )
+    return min(
+        matching_changes,
+        key=lambda change: datetime.fromisoformat(change["changed_at"]),
+        default=None,
+    )
+
+
+def exclude_immediate_reverse_transitions(
+    status_changes: list[StatusChange],
+) -> list[StatusChange]:
+    """Exclude adjacent transitions that immediately reverse each other.
+
+    The input is expected to be in chronological order. For example,
+    ``Open -> Assign`` followed by ``Assign -> Open`` is removed as one pair.
+    """
+    filtered_changes: list[StatusChange] = []
+    index = 0
+
+    while index < len(status_changes):
+        current = status_changes[index]
+        if index + 1 < len(status_changes):
+            following = status_changes[index + 1]
+            from_status = current["from_status"]
+            to_status = current["to_status"]
+            is_immediate_reverse = (
+                from_status is not None
+                and to_status is not None
+                and from_status != to_status
+                and following["from_status"] == to_status
+                and following["to_status"] == from_status
+            )
+            if is_immediate_reverse:
+                index += 2
+                continue
+
+        filtered_changes.append(current)
+        index += 1
+
+    return filtered_changes
 
 
 def build_daily_report_body(*, report_date: date, content: str) -> str:

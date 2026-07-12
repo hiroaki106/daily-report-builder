@@ -3,10 +3,92 @@ import os
 import unittest
 from unittest.mock import patch
 
-from app.main import build_daily_report_body, build_web_url, require_env
+from app.main import (
+    build_daily_report_body,
+    build_web_url,
+    exclude_immediate_reverse_transitions,
+    find_first_status_change,
+    require_env,
+)
 
 
 class MainTest(unittest.TestCase):
+    def test_find_first_status_change_returns_earliest_matching_transition(self) -> None:
+        first = find_first_status_change(
+            [
+                {
+                    "from_status": "In Review",
+                    "to_status": "Done",
+                    "changed_at": "2026-06-28T18:00:00.000+0900",
+                },
+                {
+                    "from_status": "In Progress",
+                    "to_status": "Done",
+                    "changed_at": "2026-06-28T09:00:00.000+0900",
+                },
+                {
+                    "from_status": "To Do",
+                    "to_status": "In Progress",
+                    "changed_at": "2026-06-28T08:00:00.000+0900",
+                },
+            ],
+            "Done",
+        )
+
+        self.assertEqual(
+            first,
+            {
+                "from_status": "In Progress",
+                "to_status": "Done",
+                "changed_at": "2026-06-28T09:00:00.000+0900",
+            },
+        )
+
+    def test_find_first_status_change_returns_none_without_match(self) -> None:
+        self.assertIsNone(find_first_status_change([], "Done"))
+
+    def test_exclude_immediate_reverse_transitions_removes_reverse_pair(self) -> None:
+        changes = [
+            {
+                "from_status": "Open",
+                "to_status": "Assign",
+                "changed_at": "2026-06-28T09:00:00.000+0900",
+            },
+            {
+                "from_status": "Assign",
+                "to_status": "Open",
+                "changed_at": "2026-06-28T09:01:00.000+0900",
+            },
+            {
+                "from_status": "Open",
+                "to_status": "In Progress",
+                "changed_at": "2026-06-28T10:00:00.000+0900",
+            },
+        ]
+
+        self.assertEqual(
+            exclude_immediate_reverse_transitions(changes),
+            [changes[2]],
+        )
+
+    def test_exclude_immediate_reverse_transitions_keeps_non_reverse_changes(
+        self,
+    ) -> None:
+        changes = [
+            {
+                "from_status": "Open",
+                "to_status": "Assign",
+                "changed_at": "2026-06-28T09:00:00.000+0900",
+            },
+            {
+                "from_status": "Assign",
+                "to_status": "In Progress",
+                "changed_at": "2026-06-28T09:01:00.000+0900",
+            },
+        ]
+
+        self.assertEqual(exclude_immediate_reverse_transitions(changes), changes)
+
     def test_build_daily_report_body_escapes_plain_text(self) -> None:
         body = build_daily_report_body(
             report_date=date(2026, 6, 28),
