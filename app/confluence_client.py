@@ -249,7 +249,7 @@ class ConfluenceClient:
         self,
         *,
         space_id: str,
-        parent_id: str,
+        parent_id: str | int,
         title: str,
         body: str,
         status: str = "current",
@@ -285,7 +285,7 @@ class ConfluenceClient:
                 "representation": representation,
                 "value": body,
             },
-            "parentId": parent_id,
+            "parentId": str(parent_id),
         }
 
         page = self._request("POST", "wiki/api/v2/pages", json=payload)
@@ -367,75 +367,11 @@ class ConfluenceClient:
         )
         return page
 
-    def create_or_update_page(
+    def ensure_page(
         self,
         *,
         space_id: str,
-        parent_id: str,
-        title: str,
-        body: str,
-        status: str = "current",
-        representation: str = "storage",
-        version_message: str | None = None,
-        minor_edit: bool = False,
-    ) -> dict[str, Any]:
-        """Create a page when missing, otherwise replace the existing page body.
-
-        Args:
-            space_id: Confluence space ID where the page is created or searched.
-            parent_id: Parent page ID for newly created pages and updated pages.
-            title: Page title used to find or create the page.
-            body: Page body value.
-            status: Confluence page status. Defaults to ``current``.
-            representation: Body representation. Defaults to ``storage``.
-            version_message: Optional version message for updates.
-            minor_edit: Whether the update is a minor edit.
-
-        Returns:
-            Raw Confluence page creation or update response.
-
-        Reference:
-            Uses the Confluence v2 get pages, get page by ID, create page, and
-            update page endpoints:
-            https://developer.atlassian.com/cloud/confluence/rest/v2/api-group-page/
-
-        Permissions:
-            Requires the read permissions used by ``get_page_id_by_title`` and
-            ``get_page``. Creating requires page creation permission in the
-            target space; updating requires permission to edit the existing
-            page. OAuth scopes: ``read:page:confluence`` and
-            ``write:page:confluence``. Connect scopes: ``READ`` and ``WRITE``.
-        """
-        page_id = self.fetch_page_id_by_title(title, space_id=space_id)
-        if page_id is None:
-            return self.create_page(
-                space_id=space_id,
-                parent_id=parent_id,
-                title=title,
-                body=body,
-                status=status,
-                representation=representation,
-            )
-
-        page = self.fetch_page(page_id, body_format=representation)
-        version_number = _page_version_number(page) + 1
-        return self.update_page(
-            page_id,
-            title=title,
-            body=body,
-            version_number=version_number,
-            status=status,
-            representation=representation,
-            parent_id=parent_id,
-            version_message=version_message,
-            minor_edit=minor_edit,
-        )
-
-    def fetch_or_create_page(
-        self,
-        *,
-        space_id: str,
-        parent_id: str,
+        parent_id: str | int,
         title: str,
         body: str,
         status: str = "current",
@@ -460,8 +396,8 @@ class ConfluenceClient:
             https://developer.atlassian.com/cloud/confluence/rest/v2/api-group-page/
 
         Permissions:
-            Requires the read permissions used by ``get_page_id_by_title`` and
-            ``get_page``. Creating requires page creation permission in the
+            Requires the read permissions used by ``fetch_page_id_by_title`` and
+            ``fetch_page``. Creating requires page creation permission in the
             target space. OAuth scopes: ``read:page:confluence`` and, when
             creating, ``write:page:confluence``. Connect scopes: ``READ`` and,
             when creating, ``WRITE``.
@@ -499,17 +435,3 @@ class ConfluenceClient:
             f"Confluence API request failed: {response.status_code} "
             f"{response.reason_phrase}: {detail}"
         )
-
-
-def _page_version_number(page: dict[str, Any]) -> int:
-    version = page.get("version")
-    if not isinstance(version, dict):
-        raise ConfluenceAPIError("Confluence page response did not include version")
-
-    number = version.get("number")
-    if not isinstance(number, int):
-        raise ConfluenceAPIError(
-            "Confluence page response did not include an integer version number"
-        )
-
-    return number

@@ -240,7 +240,7 @@ class ConfluenceDataCenterClient:
         self,
         *,
         space_key: str,
-        parent_id: str,
+        parent_id: str | int,
         title: str,
         body: str,
         status: str = "current",
@@ -366,73 +366,11 @@ class ConfluenceDataCenterClient:
         )
         return page
 
-    def create_or_update_page(
+    def ensure_page(
         self,
         *,
         space_key: str,
-        parent_id: str,
-        title: str,
-        body: str,
-        status: str = "current",
-        representation: str = "storage",
-        version_message: str | None = None,
-        minor_edit: bool = False,
-    ) -> dict[str, Any]:
-        """Create a page when missing, otherwise replace the existing page body.
-
-        Args:
-            space_key: Confluence space key where the page is created or searched.
-            parent_id: Parent page content ID for newly created and updated pages.
-            title: Page title used to find or create the page.
-            body: Page body value.
-            status: Confluence page status. Defaults to ``current``.
-            representation: Body representation. Defaults to ``storage``.
-            version_message: Optional version message for updates.
-            minor_edit: Whether the update is a minor edit.
-
-        Returns:
-            Raw Confluence page creation or update response.
-
-        Reference:
-            Uses the Data Center content find, get, create, and update endpoints:
-            https://developer.atlassian.com/server/confluence/confluence-rest-api-examples/
-
-        Permissions:
-            Requires permission to view, create, or edit the relevant pages.
-            Data Center REST endpoints use the permissions of the authenticated
-            user.
-        """
-        page_id = self.fetch_page_id_by_title(title, space_key=space_key)
-        if page_id is None:
-            return self.create_page(
-                space_key=space_key,
-                parent_id=parent_id,
-                title=title,
-                body=body,
-                status=status,
-                representation=representation,
-            )
-
-        page = self.fetch_page(page_id, body_format=representation)
-        version_number = _page_version_number(page) + 1
-        return self.update_page(
-            page_id,
-            space_key=space_key,
-            title=title,
-            body=body,
-            version_number=version_number,
-            status=status,
-            representation=representation,
-            parent_id=parent_id,
-            version_message=version_message,
-            minor_edit=minor_edit,
-        )
-
-    def fetch_or_create_page(
-        self,
-        *,
-        space_key: str,
-        parent_id: str,
+        parent_id: str | int,
         title: str,
         body: str,
         status: str = "current",
@@ -492,19 +430,3 @@ class ConfluenceDataCenterClient:
             f"Confluence Data Center API request failed: {response.status_code} "
             f"{response.reason_phrase}: {detail}"
         )
-
-
-def _page_version_number(page: dict[str, Any]) -> int:
-    version = page.get("version")
-    if not isinstance(version, dict):
-        raise ConfluenceDataCenterAPIError(
-            "Confluence page response did not include version"
-        )
-
-    number = version.get("number")
-    if not isinstance(number, int):
-        raise ConfluenceDataCenterAPIError(
-            "Confluence page response did not include an integer version number"
-        )
-
-    return number

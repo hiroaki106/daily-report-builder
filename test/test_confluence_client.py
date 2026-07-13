@@ -90,7 +90,7 @@ class ConfluenceClientTest(unittest.TestCase):
         ) as client:
             page = client.create_page(
                 space_id="SPACE123",
-                parent_id="PARENT123",
+                parent_id=456,
                 title="Daily Report",
                 body="<p>done</p>",
             )
@@ -114,14 +114,14 @@ class ConfluenceClientTest(unittest.TestCase):
                     "representation": "storage",
                     "value": "<p>done</p>",
                 },
-                "parentId": "PARENT123",
+                "parentId": "456",
             },
         )
         mock_logger.info.assert_called_once_with(
             "Created Confluence page: page_id=%s title=%s parent_id=%s",
             "123",
             "Daily Report",
-            "PARENT123",
+            456,
         )
 
     def test_create_page_raises_for_api_error(self) -> None:
@@ -341,109 +341,7 @@ class ConfluenceClientTest(unittest.TestCase):
             5,
         )
 
-    def test_create_or_update_page_updates_existing_page(self) -> None:
-        requests: list[httpx.Request] = []
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            requests.append(request)
-            if request.method == "GET" and request.url.path == "/wiki/api/v2/pages":
-                return httpx.Response(
-                    200,
-                    json={
-                        "results": [
-                            {
-                                "id": "123",
-                                "title": "Daily Report",
-                            }
-                        ]
-                    },
-                )
-
-            if request.method == "GET":
-                return httpx.Response(
-                    200,
-                    json={
-                        "id": "123",
-                        "title": "Daily Report",
-                        "version": {"number": 4},
-                    },
-                )
-
-            return httpx.Response(
-                200,
-                json={
-                    "id": "123",
-                    "title": "Daily Report",
-                    "version": {"number": 5},
-                },
-            )
-
-        transport = httpx.MockTransport(handler)
-
-        with ConfluenceClient(
-            base_url="https://example.atlassian.net",
-            email="user@example.com",
-            api_token="token",
-            transport=transport,
-        ) as client:
-            page = client.create_or_update_page(
-                space_id="SPACE123",
-                parent_id="PARENT123",
-                title="Daily Report",
-                body="<p>updated</p>",
-                version_message="Refresh report",
-            )
-
-        self.assertEqual(page["version"]["number"], 5)
-        self.assertEqual([request.method for request in requests], ["GET", "GET", "PUT"])
-        self.assertEqual(
-            str(requests[0].url),
-            "https://example.atlassian.net/wiki/api/v2/pages?title=Daily+Report&limit=1&space-id=SPACE123",
-        )
-        self.assertEqual(
-            str(requests[1].url),
-            "https://example.atlassian.net/wiki/api/v2/pages/123?body-format=storage",
-        )
-        self.assertEqual(
-            json.loads(requests[2].content)["version"]["number"],
-            5,
-        )
-
-    def test_create_or_update_page_creates_when_missing(self) -> None:
-        requests: list[httpx.Request] = []
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            requests.append(request)
-            if request.method == "GET":
-                return httpx.Response(200, json={"results": []})
-
-            return httpx.Response(
-                200,
-                json={
-                    "id": "123",
-                    "title": "Daily Report",
-                },
-            )
-
-        transport = httpx.MockTransport(handler)
-
-        with ConfluenceClient(
-            base_url="https://example.atlassian.net",
-            email="user@example.com",
-            api_token="token",
-            transport=transport,
-        ) as client:
-            page = client.create_or_update_page(
-                space_id="SPACE123",
-                parent_id="PARENT123",
-                title="Daily Report",
-                body="<p>created</p>",
-            )
-
-        self.assertEqual(page["id"], "123")
-        self.assertEqual([request.method for request in requests], ["GET", "POST"])
-
-    def test_fetch_or_create_page_returns_existing_page_without_updating(self) -> None:
+    def test_ensure_page_returns_existing_page_without_updating(self) -> None:
         requests: list[httpx.Request] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -478,9 +376,9 @@ class ConfluenceClientTest(unittest.TestCase):
             api_token="token",
             transport=transport,
         ) as client:
-            page = client.fetch_or_create_page(
+            page = client.ensure_page(
                 space_id="SPACE123",
-                parent_id="PARENT123",
+                parent_id=456,
                 title="Daily Report",
                 body="<p>ignored for existing page</p>",
             )
@@ -492,7 +390,7 @@ class ConfluenceClientTest(unittest.TestCase):
             "https://example.atlassian.net/wiki/api/v2/pages/123?body-format=storage",
         )
 
-    def test_fetch_or_create_page_creates_when_missing(self) -> None:
+    def test_ensure_page_creates_when_missing(self) -> None:
         requests: list[httpx.Request] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -516,15 +414,16 @@ class ConfluenceClientTest(unittest.TestCase):
             api_token="token",
             transport=transport,
         ) as client:
-            page = client.fetch_or_create_page(
+            page = client.ensure_page(
                 space_id="SPACE123",
-                parent_id="PARENT123",
+                parent_id=456,
                 title="Daily Report",
                 body="<p>created</p>",
             )
 
         self.assertEqual(page["id"], "123")
         self.assertEqual([request.method for request in requests], ["GET", "POST"])
+        self.assertEqual(json.loads(requests[1].content)["parentId"], "456")
 
     def test_fetch_current_user_returns_user_information(self) -> None:
         captured_request: httpx.Request | None = None
