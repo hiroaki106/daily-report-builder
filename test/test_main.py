@@ -89,6 +89,42 @@ class MainTest(unittest.TestCase):
 
         self.assertEqual(exclude_immediate_reverse_transitions(changes), changes)
 
+    def test_exclude_immediate_reverse_transitions_repeats_after_removal(
+        self,
+    ) -> None:
+        changes = [
+            {
+                "from_status": "Open",
+                "to_status": "Assign",
+                "changed_at": "2026-06-28T09:00:00.000+0900",
+            },
+            {
+                "from_status": "Assign",
+                "to_status": "In Progress",
+                "changed_at": "2026-06-28T09:01:00.000+0900",
+            },
+            {
+                "from_status": "In Progress",
+                "to_status": "Assign",
+                "changed_at": "2026-06-28T09:02:00.000+0900",
+            },
+            {
+                "from_status": "Assign",
+                "to_status": "Open",
+                "changed_at": "2026-06-28T09:03:00.000+0900",
+            },
+            {
+                "from_status": "Open",
+                "to_status": "Done",
+                "changed_at": "2026-06-28T10:00:00.000+0900",
+            },
+        ]
+
+        self.assertEqual(
+            exclude_immediate_reverse_transitions(changes),
+            [changes[4]],
+        )
+
     def test_build_daily_report_body_escapes_plain_text(self) -> None:
         body = build_daily_report_body(
             report_date=date(2026, 6, 28),

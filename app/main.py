@@ -102,33 +102,30 @@ def find_first_status_change(
 def exclude_immediate_reverse_transitions(
     status_changes: list[StatusChange],
 ) -> list[StatusChange]:
-    """Exclude adjacent transitions that immediately reverse each other.
+    """Exclude adjacent reverse transitions until no reverse pairs remain.
 
     The input is expected to be in chronological order. For example,
     ``Open -> Assign`` followed by ``Assign -> Open`` is removed as one pair.
     """
     filtered_changes: list[StatusChange] = []
-    index = 0
 
-    while index < len(status_changes):
-        current = status_changes[index]
-        if index + 1 < len(status_changes):
-            following = status_changes[index + 1]
-            from_status = current["from_status"]
-            to_status = current["to_status"]
+    for current in status_changes:
+        if filtered_changes:
+            previous = filtered_changes[-1]
+            from_status = previous["from_status"]
+            to_status = previous["to_status"]
             is_immediate_reverse = (
                 from_status is not None
                 and to_status is not None
                 and from_status != to_status
-                and following["from_status"] == to_status
-                and following["to_status"] == from_status
+                and current["from_status"] == to_status
+                and current["to_status"] == from_status
             )
             if is_immediate_reverse:
-                index += 2
+                filtered_changes.pop()
                 continue
 
         filtered_changes.append(current)
-        index += 1
 
     return filtered_changes
 
