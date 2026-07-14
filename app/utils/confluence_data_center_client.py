@@ -1,4 +1,4 @@
-"""Client helpers for Confluence Cloud API endpoints."""
+"""Client helpers for Confluence Data Center REST API endpoints."""
 
 from __future__ import annotations
 
@@ -8,37 +8,39 @@ from urllib.parse import quote, urljoin
 
 import httpx
 
-from app.browser_cookies import BrowserCookieError, load_chrome_cookies
+from app.utils.browser_cookies import BrowserCookieError, load_chrome_cookies
 
 
 _LOGGER = logging.getLogger(__name__)
 _LOGGER.addHandler(logging.NullHandler())
 
 
-class ConfluenceAPIError(RuntimeError):
-    """Raised when Confluence returns an unsuccessful response."""
+class ConfluenceDataCenterAPIError(RuntimeError):
+    """Raised when Confluence Data Center returns an unsuccessful response."""
 
 
-class ConfluenceClient:
-    """Synchronous client for the Confluence Cloud APIs used by this application."""
+class ConfluenceDataCenterClient:
+    """Synchronous client for Confluence Data Center APIs used by this app."""
 
     def __init__(
         self,
         base_url: str,
-        email: str | None = None,
-        api_token: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
         *,
         timeout: float = 30.0,
         transport: httpx.BaseTransport | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
-        """Initialize an authenticated Confluence API client.
+        """Initialize an authenticated Confluence Data Center API client.
 
         Args:
-            base_url: Atlassian site URL, such as ``https://example.atlassian.net``.
-            email: Atlassian account email used for basic authentication.
-            api_token: Atlassian API token used for basic authentication. If either
-                credential is missing, Chrome cookies are used instead.
+            base_url: Confluence base URL, such as
+                ``https://confluence.example.com`` or
+                ``https://example.com/confluence``.
+            username: Confluence username used for basic authentication.
+            password: Confluence password or API token used for basic authentication.
+                If either credential is missing, Chrome cookies are used instead.
             timeout: Request timeout in seconds.
             transport: Optional httpx transport, mainly used by tests.
             logger: Optional logger. Defaults to this module's logger.
@@ -47,13 +49,13 @@ class ConfluenceClient:
         self._logger = logger or _LOGGER
         auth: tuple[str, str] | None = None
         cookies = None
-        if email is not None and api_token is not None:
-            auth = (email, api_token)
+        if username is not None and password is not None:
+            auth = (username, password)
         else:
             try:
                 cookies = load_chrome_cookies(base_url)
             except BrowserCookieError as exc:
-                raise ConfluenceAPIError(str(exc)) from exc
+                raise ConfluenceDataCenterAPIError(str(exc)) from exc
 
         self._client = httpx.Client(
             auth=auth,
@@ -70,7 +72,7 @@ class ConfluenceClient:
         """Close the underlying HTTP client."""
         self._client.close()
 
-    def __enter__(self) -> "ConfluenceClient":
+    def __enter__(self) -> "ConfluenceDataCenterClient":
         """Return this client for use as a context manager."""
         return self
 
@@ -82,18 +84,16 @@ class ConfluenceClient:
         """Fetch the currently authenticated Confluence user.
 
         Returns:
-            Raw Confluence user response. The ``accountId`` value can be used
-            for Confluence user mentions in storage-format page content.
+            Raw Confluence user response.
 
         Reference:
-            https://developer.atlassian.com/cloud/confluence/rest/v1/api-group-users/#api-wiki-rest-api-user-current-get
+            https://developer.atlassian.com/server/confluence/confluence-rest-api-examples/
 
         Permissions:
-            Requires permission to access the Confluence site. OAuth scopes:
-            classic ``read:confluence-user``; granular
-            ``read:content-details:confluence``. Connect scope: ``READ``.
+            Requires permission to access the Confluence site. Data Center REST
+            endpoints use the permissions of the authenticated user.
         """
-        return self._request("GET", "wiki/rest/api/user/current")
+        return self._request("GET", "rest/api/user/current")
 
     def fetch_space_id_by_key(self, key: str) -> str | None:
         """Fetch a Confluence space ID by space key.
@@ -102,32 +102,21 @@ class ConfluenceClient:
             key: Confluence space key, such as ``DEV``.
 
         Returns:
-            Space ID when the key exists, otherwise ``None``.
+            Space ID when the key exists in the response, otherwise ``None``.
 
         Reference:
-            https://developer.atlassian.com/cloud/confluence/rest/v2/api-group-space/#api-spaces-get
+            https://developer.atlassian.com/server/confluence/confluence-rest-api-examples/
 
         Permissions:
-            Requires permission to access the Confluence site. Only spaces the
-            user can view are returned. OAuth scope:
-            ``read:space:confluence``. Connect scope: ``READ``.
+            Requires permission to view the space. Data Center REST endpoints
+            use the permissions of the authenticated user.
         """
-        response = self._request(
-            "GET",
-            "wiki/api/v2/spaces",
-            params={"keys": key, "limit": 1},
-        )
-        results = response.get("results", [])
-        if not isinstance(results, list):
-            raise ConfluenceAPIError(
-                "Confluence spaces response did not include a results list"
-            )
-
-        for space in results:
-            if isinstance(space, dict):
-                space_id = space.get("id")
-                if isinstance(space_id, str):
-                    return space_id
+        response = self._request("GET", f"rest/api/space/{quote(key, safe='')}")
+        space_id = response.get("id")
+        if isinstance(space_id, str):
+            return space_id
+        if isinstance(space_id, int):
+            return str(space_id)
 
         return None
 
@@ -135,37 +124,37 @@ class ConfluenceClient:
         self,
         title: str,
         *,
-        space_id: str | None = None,
+        space_key: str | None = None,
     ) -> str | None:
         """Fetch the first Confluence page ID matching a title.
 
         Args:
             title: Page title to search for.
-            space_id: Optional Confluence space ID used to narrow the search.
+            space_key: Optional Confluence space key used to narrow the search.
 
         Returns:
             Page ID for the first matching page, otherwise ``None``.
 
         Reference:
-            https://developer.atlassian.com/cloud/confluence/rest/v2/api-group-page/#api-pages-get
+            https://developer.atlassian.com/server/confluence/confluence-rest-api-examples/#find-a-page-by-title-and-space-key
 
         Permissions:
-            Requires permission to access the Confluence site. Only pages the
-            user can view are returned. OAuth scope: ``read:page:confluence``.
-            Connect scope: ``READ``.
+            Requires permission to view the matching page. Data Center REST
+            endpoints use the permissions of the authenticated user.
         """
         params: dict[str, str | int] = {
             "title": title,
+            "type": "page",
             "limit": 1,
         }
-        if space_id is not None:
-            params["space-id"] = space_id
+        if space_key is not None:
+            params["spaceKey"] = space_key
 
-        response = self._request("GET", "wiki/api/v2/pages", params=params)
+        response = self._request("GET", "rest/api/content", params=params)
         results = response.get("results", [])
         if not isinstance(results, list):
-            raise ConfluenceAPIError(
-                "Confluence pages response did not include a results list"
+            raise ConfluenceDataCenterAPIError(
+                "Confluence content response did not include a results list"
             )
 
         for page in results:
@@ -173,6 +162,8 @@ class ConfluenceClient:
                 page_id = page.get("id")
                 if isinstance(page_id, str):
                     return page_id
+                if isinstance(page_id, int):
+                    return str(page_id)
 
         return None
 
@@ -182,30 +173,30 @@ class ConfluenceClient:
         *,
         body_format: str | None = None,
     ) -> dict[str, Any]:
-        """Fetch a Confluence page by ID.
+        """Fetch a Confluence page by content ID.
 
         Args:
-            page_id: Confluence page ID.
-            body_format: Optional body representation requested from Confluence,
-                such as ``storage`` or ``atlas_doc_format``.
+            page_id: Confluence content ID.
+            body_format: Optional body representation to expand, such as
+                ``storage`` or ``view``.
 
         Returns:
-            Raw Confluence page response.
+            Raw Confluence content response.
 
         Reference:
-            https://developer.atlassian.com/cloud/confluence/rest/v2/api-group-page/#api-pages-id-get
+            https://developer.atlassian.com/server/confluence/confluence-rest-api-examples/
 
         Permissions:
-            Requires permission to view the page and its corresponding space.
-            OAuth scope: ``read:page:confluence``. Connect scope: ``READ``.
+            Requires permission to view the page. Data Center REST endpoints use
+            the permissions of the authenticated user.
         """
         params: dict[str, str] | None = None
         if body_format is not None:
-            params = {"body-format": body_format}
+            params = {"expand": f"body.{body_format},version,space"}
 
         return self._request(
             "GET",
-            f"wiki/api/v2/pages/{quote(str(page_id), safe='')}",
+            f"rest/api/content/{quote(str(page_id), safe='')}",
             params=params,
         )
 
@@ -215,20 +206,20 @@ class ConfluenceClient:
         """Fetch a Confluence page body value in the requested body format.
 
         Args:
-            page_id: Confluence page ID.
+            page_id: Confluence content ID.
             body_format: Body representation requested from Confluence,
-                such as ``storage`` or ``atlas_doc_format``.
+                such as ``storage`` or ``view``.
 
         Returns:
             Body value in the requested format, otherwise ``None`` when the
             response does not include that body format.
 
         Reference:
-            https://developer.atlassian.com/cloud/confluence/rest/v2/api-group-page/#api-pages-id-get
+            https://developer.atlassian.com/server/confluence/confluence-rest-api-examples/
 
         Permissions:
-            Requires permission to view the page and its corresponding space.
-            OAuth scope: ``read:page:confluence``. Connect scope: ``READ``.
+            Requires permission to view the page. Data Center REST endpoints use
+            the permissions of the authenticated user.
         """
         response = self.fetch_page(page_id, body_format=body_format)
         body = response.get("body")
@@ -248,7 +239,7 @@ class ConfluenceClient:
     def create_page(
         self,
         *,
-        space_id: str,
+        space_key: str,
         parent_id: str | int,
         title: str,
         body: str,
@@ -258,39 +249,42 @@ class ConfluenceClient:
         """Create a Confluence page under a required parent page.
 
         Args:
-            space_id: Confluence space ID where the page is created.
-            parent_id: Parent page ID. This application always creates pages
-                under an existing parent page.
+            space_key: Confluence space key where the page is created.
+            parent_id: Parent page content ID.
             title: New page title.
             body: Page body value.
             status: Confluence page status. Defaults to ``current``.
             representation: Body representation. Defaults to ``storage``.
 
         Returns:
-            Raw Confluence page creation response.
+            Raw Confluence content creation response.
 
         Reference:
-            https://developer.atlassian.com/cloud/confluence/rest/v2/api-group-page/#api-pages-post
+            https://developer.atlassian.com/server/confluence/confluence-rest-api-examples/#create-a-new-page-as-a-child-of-another-page
 
         Permissions:
-            Requires permission to view the corresponding space, and page
-            creation must be allowed in that space. OAuth scope:
-            ``write:page:confluence``. Connect scope: ``WRITE``.
+            Requires permission to create pages in the target space and view the
+            parent page. Data Center REST endpoints use the permissions of the
+            authenticated user.
         """
         payload: dict[str, Any] = {
-            "spaceId": space_id,
-            "status": status,
+            "type": "page",
             "title": title,
+            "space": {"key": space_key},
+            "ancestors": [{"id": str(parent_id)}],
             "body": {
-                "representation": representation,
-                "value": body,
+                representation: {
+                    "representation": representation,
+                    "value": body,
+                }
             },
-            "parentId": str(parent_id),
         }
+        if status != "current":
+            payload["status"] = status
 
-        page = self._request("POST", "wiki/api/v2/pages", json=payload)
+        page = self._request("POST", "rest/api/content", json=payload)
         self._logger.info(
-            "Created Confluence page: page_id=%s title=%s parent_id=%s",
+            "Created Confluence Data Center page: page_id=%s title=%s parent_id=%s",
             page.get("id"),
             title,
             parent_id,
@@ -301,6 +295,7 @@ class ConfluenceClient:
         self,
         page_id: str | int,
         *,
+        space_key: str,
         title: str,
         body: str,
         version_number: int,
@@ -313,26 +308,26 @@ class ConfluenceClient:
         """Update a Confluence page.
 
         Args:
-            page_id: Confluence page ID.
+            page_id: Confluence content ID.
+            space_key: Confluence space key containing the page.
             title: Page title.
             body: Replacement page body value.
             version_number: New Confluence page version number.
             status: Confluence page status. Defaults to ``current``.
             representation: Body representation. Defaults to ``storage``.
-            parent_id: Optional parent page ID. When provided, the page is kept
-                under or moved to that parent.
+            parent_id: Optional parent page content ID.
             version_message: Optional version message.
             minor_edit: Whether the update is a minor edit.
 
         Returns:
-            Raw Confluence page update response.
+            Raw Confluence content update response.
 
         Reference:
-            https://developer.atlassian.com/cloud/confluence/rest/v2/api-group-page/#api-pages-id-put
+            https://developer.atlassian.com/server/confluence/confluence-rest-api-examples/#update-a-page
 
         Permissions:
-            Requires permission to view and edit the page. OAuth scope:
-            ``write:page:confluence``. Connect scope: ``WRITE``.
+            Requires permission to edit the page. Data Center REST endpoints use
+            the permissions of the authenticated user.
         """
         version: dict[str, Any] = {
             "number": version_number,
@@ -343,24 +338,28 @@ class ConfluenceClient:
 
         payload: dict[str, Any] = {
             "id": str(page_id),
+            "type": "page",
             "status": status,
             "title": title,
+            "space": {"key": space_key},
             "body": {
-                "representation": representation,
-                "value": body,
+                representation: {
+                    "representation": representation,
+                    "value": body,
+                }
             },
             "version": version,
         }
         if parent_id is not None:
-            payload["parentId"] = parent_id
+            payload["ancestors"] = [{"id": str(parent_id)}]
 
         page = self._request(
             "PUT",
-            f"wiki/api/v2/pages/{quote(str(page_id), safe='')}",
+            f"rest/api/content/{quote(str(page_id), safe='')}",
             json=payload,
         )
         self._logger.info(
-            "Updated Confluence page: page_id=%s title=%s version=%s",
+            "Updated Confluence Data Center page: page_id=%s title=%s version=%s",
             page_id,
             title,
             version_number,
@@ -370,7 +369,7 @@ class ConfluenceClient:
     def ensure_page(
         self,
         *,
-        space_id: str,
+        space_key: str,
         parent_id: str | int,
         title: str,
         body: str,
@@ -380,8 +379,8 @@ class ConfluenceClient:
         """Return an existing page by title, or create it when missing.
 
         Args:
-            space_id: Confluence space ID where the page is created or searched.
-            parent_id: Parent page ID used when the page must be created.
+            space_key: Confluence space key where the page is created or searched.
+            parent_id: Parent page content ID used when the page must be created.
             title: Page title used to find or create the page.
             body: Page body value used only when the page must be created.
             status: Confluence page status. Defaults to ``current``.
@@ -391,23 +390,19 @@ class ConfluenceClient:
             Existing raw Confluence page response, or the created page response.
 
         Reference:
-            Uses the Confluence v2 get pages, get page by ID, and create page
-            endpoints:
-            https://developer.atlassian.com/cloud/confluence/rest/v2/api-group-page/
+            Uses the Data Center content find, get, and create endpoints:
+            https://developer.atlassian.com/server/confluence/confluence-rest-api-examples/
 
         Permissions:
-            Requires the read permissions used by ``fetch_page_id_by_title`` and
-            ``fetch_page``. Creating requires page creation permission in the
-            target space. OAuth scopes: ``read:page:confluence`` and, when
-            creating, ``write:page:confluence``. Connect scopes: ``READ`` and,
-            when creating, ``WRITE``.
+            Requires permission to view or create the relevant pages. Data Center
+            REST endpoints use the permissions of the authenticated user.
         """
-        page_id = self.fetch_page_id_by_title(title, space_id=space_id)
+        page_id = self.fetch_page_id_by_title(title, space_key=space_key)
         if page_id is not None:
             return self.fetch_page(page_id, body_format=representation)
 
         return self.create_page(
-            space_id=space_id,
+            space_key=space_key,
             parent_id=parent_id,
             title=title,
             body=body,
@@ -416,22 +411,22 @@ class ConfluenceClient:
         )
 
     def _request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        """Send an HTTP request and raise a ConfluenceAPIError on failure."""
+        """Send an HTTP request and raise ConfluenceDataCenterAPIError on failure."""
         url = urljoin(self._base_url, path)
-        self._logger.debug("Confluence API request: %s %s", method, path)
+        self._logger.debug("Confluence Data Center API request: %s %s", method, path)
         response = self._client.request(method, url, **kwargs)
         if response.is_success:
             return response.json()
 
         detail = response.text[:500]
         self._logger.error(
-            "Confluence API request failed: %s %s returned %s %s",
+            "Confluence Data Center API request failed: %s %s returned %s %s",
             method,
             path,
             response.status_code,
             response.reason_phrase,
         )
-        raise ConfluenceAPIError(
-            f"Confluence API request failed: {response.status_code} "
+        raise ConfluenceDataCenterAPIError(
+            f"Confluence Data Center API request failed: {response.status_code} "
             f"{response.reason_phrase}: {detail}"
         )

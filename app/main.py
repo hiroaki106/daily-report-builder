@@ -7,7 +7,7 @@ import os
 from datetime import date, datetime
 from typing import TypedDict
 
-from app.confluence_client import ConfluenceClient
+from app.utils.confluence_client import ConfluenceClient
 
 
 class StatusChange(TypedDict):

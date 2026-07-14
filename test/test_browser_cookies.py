@@ -2,7 +2,7 @@ import unittest
 from http.cookiejar import Cookie, CookieJar
 from unittest.mock import patch
 
-from app.browser_cookies import BrowserCookieError, load_chrome_cookies
+from app.utils.browser_cookies import BrowserCookieError, load_chrome_cookies
 
 
 def _cookie_jar() -> CookieJar:
@@ -32,7 +32,7 @@ def _cookie_jar() -> CookieJar:
 
 
 class LoadChromeCookiesTest(unittest.TestCase):
-    @patch("app.browser_cookies.browser_cookie3.chrome")
+    @patch("app.utils.browser_cookies.browser_cookie3.chrome")
     def test_loads_only_base_url_domain(self, chrome: object) -> None:
         chrome.return_value = _cookie_jar()  # type: ignore[attr-defined]
 
@@ -43,7 +43,7 @@ class LoadChromeCookiesTest(unittest.TestCase):
             domain_name="example.atlassian.net"
         )
 
-    @patch("app.browser_cookies.browser_cookie3.chrome")
+    @patch("app.utils.browser_cookies.browser_cookie3.chrome")
     def test_raises_when_no_cookie_is_found(self, chrome: object) -> None:
         chrome.return_value = CookieJar()  # type: ignore[attr-defined]
 

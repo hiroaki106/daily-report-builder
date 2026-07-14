@@ -4,12 +4,12 @@ from unittest.mock import Mock, patch
 
 import httpx
 
-from app.jira_client import JiraAPIError, JiraClient, extract_status_changes
-from app.browser_cookies import BrowserCookieError
+from app.utils.browser_cookies import BrowserCookieError
+from app.utils.jira_client import JiraAPIError, JiraClient, extract_status_changes
 
 
 class JiraClientTest(unittest.TestCase):
-    @patch("app.jira_client.load_chrome_cookies")
+    @patch("app.utils.jira_client.load_chrome_cookies")
     def test_uses_chrome_cookies_when_either_credential_is_missing(
         self, load_cookies: Mock
     ) -> None:
@@ -31,7 +31,7 @@ class JiraClientTest(unittest.TestCase):
         self.assertEqual(captured_request.headers["cookie"], "session=cookie-value")
         self.assertNotIn("authorization", captured_request.headers)
 
-    @patch("app.jira_client.load_chrome_cookies")
+    @patch("app.utils.jira_client.load_chrome_cookies")
     def test_raises_api_error_when_chrome_cookies_cannot_be_loaded(
         self, load_cookies: Mock
     ) -> None:

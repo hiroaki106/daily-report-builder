@@ -4,15 +4,15 @@ from unittest.mock import Mock, patch
 
 import httpx
 
-from app.confluence_data_center_client import (
+from app.utils.confluence_data_center_client import (
     ConfluenceDataCenterAPIError,
     ConfluenceDataCenterClient,
 )
-from app.browser_cookies import BrowserCookieError
+from app.utils.browser_cookies import BrowserCookieError
 
 
 class ConfluenceDataCenterClientTest(unittest.TestCase):
-    @patch("app.confluence_data_center_client.load_chrome_cookies")
+    @patch("app.utils.confluence_data_center_client.load_chrome_cookies")
     def test_uses_chrome_cookies_when_either_credential_is_missing(
         self, load_cookies: Mock
     ) -> None:
@@ -36,7 +36,7 @@ class ConfluenceDataCenterClientTest(unittest.TestCase):
         self.assertEqual(captured_request.headers["cookie"], "session=cookie-value")
         self.assertNotIn("authorization", captured_request.headers)
 
-    @patch("app.confluence_data_center_client.load_chrome_cookies")
+    @patch("app.utils.confluence_data_center_client.load_chrome_cookies")
     def test_raises_api_error_when_chrome_cookies_cannot_be_loaded(
         self, load_cookies: Mock
     ) -> None:

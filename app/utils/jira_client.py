@@ -8,7 +8,7 @@ from urllib.parse import quote, urljoin
 
 import httpx
 
-from app.browser_cookies import BrowserCookieError, load_chrome_cookies
+from app.utils.browser_cookies import BrowserCookieError, load_chrome_cookies
 
 _LOGGER = logging.getLogger(__name__)
 _LOGGER.addHandler(logging.NullHandler())
