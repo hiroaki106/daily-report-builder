@@ -1,18 +1,45 @@
-from datetime import date
-import os
+from datetime import date, datetime
 import unittest
 from unittest.mock import patch
 
-from app.main import (
+from app.legacy_main_helpers import (
     build_daily_report_body,
     build_web_url,
     exclude_immediate_reverse_transitions,
     find_first_status_change,
-    require_env,
 )
+from app import main as main_module
 
 
 class MainTest(unittest.TestCase):
+    def test_main_runs_report_workflow(self) -> None:
+        logger = object()
+        start_date = datetime(2026, 7, 1, 9)
+        end_date = datetime(2026, 7, 1, 18)
+
+        with (
+            patch.object(main_module, "create_logger", return_value=logger),
+            patch.object(
+                main_module,
+                "parse_date_range",
+                return_value=(start_date, end_date),
+            ),
+            patch.object(main_module, "update_target_jira_filters") as update_filters,
+            patch.object(main_module, "aggregate_slo", return_value=[]) as aggregate,
+            patch.object(
+                main_module, "confirm_dashboard_matches_sheet"
+            ) as confirm,
+            patch.object(main_module, "build_report_body", return_value="") as build,
+            patch.object(main_module, "create_confluence_page") as create_page,
+        ):
+            main_module.main()
+
+        update_filters.assert_called_once_with(start_date, end_date, logger)
+        aggregate.assert_called_once_with(start_date, end_date)
+        confirm.assert_called_once_with()
+        build.assert_called_once_with(start_date, end_date, [])
+        create_page.assert_called_once_with(start_date, end_date, "")
+
     def test_find_first_status_change_returns_earliest_matching_transition(self) -> None:
         first = find_first_status_change(
             [
@@ -157,16 +184,6 @@ class MainTest(unittest.TestCase):
 
     def test_build_web_url_returns_none_without_webui(self) -> None:
         self.assertIsNone(build_web_url("https://example.atlassian.net", {}))
-
-    def test_require_env_returns_value(self) -> None:
-        with patch.dict(os.environ, {"CONFLUENCE_SPACE_ID": "123"}, clear=True):
-            self.assertEqual(require_env("CONFLUENCE_SPACE_ID"), "123")
-
-    def test_require_env_raises_for_missing_value(self) -> None:
-        with patch.dict(os.environ, {}, clear=True):
-            with self.assertRaisesRegex(RuntimeError, "CONFLUENCE_SPACE_ID"):
-                require_env("CONFLUENCE_SPACE_ID")
-
 
 if __name__ == "__main__":
     unittest.main()

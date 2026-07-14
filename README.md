@@ -4,28 +4,23 @@ Confluence Cloud に日次レポートページを作成する小さなCLIです
 
 ## Setup
 
-```bash
-export CONFLUENCE_BASE_URL="https://your-domain.atlassian.net"
-export CONFLUENCE_EMAIL="you@example.com"
-export CONFLUENCE_API_TOKEN="your-api-token"
-export CONFLUENCE_SPACE_ID="123456789"
-# 任意: 親ページ配下に作る場合
-export CONFLUENCE_PARENT_ID="987654321"
-```
+`app/config.py` にJiraとConfluenceの接続先、対象IDを設定します。
+認証情報を `None` にするとChromeのCookieを使用します。
 
 ## Usage
 
 ```bash
-uv run python main.py --content "今日やったことをここに書く"
+uv run python main.py
 ```
 
-日付やタイトルを指定する場合:
+引数を省略すると、開始日時と終了日時を対話形式で入力します。
+
+集計期間を指定する場合（`yyyy/MM/dd HH:mm`形式）:
 
 ```bash
 uv run python main.py \
-  --date 2026-06-28 \
-  --title "Daily Report 2026-06-28" \
-  --content "実装、レビュー、明日の予定"
+  --start-date "2026/07/01 09:00" \
+  --end-date "2026/07/01 18:00"
 ```
 
 Confluence API への通信は `app/confluence_client.py` の `ConfluenceClient` に集約しています。
