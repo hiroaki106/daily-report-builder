@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Self
 from urllib.parse import quote, urljoin
 
 import httpx
@@ -69,7 +69,7 @@ class JiraClient:
         """Close the underlying HTTP client."""
         self._client.close()
 
-    def __enter__(self) -> "JiraClient":
+    def __enter__(self) -> Self:
         """Return this client for use as a context manager."""
         return self
 
@@ -77,11 +77,12 @@ class JiraClient:
         """Close the client when leaving a context manager block."""
         self.close()
 
-    def fetch_issues_by_jql(
+    def search_issues_by_jql(
         self,
         jql: str,
         *,
         fields: list[str] | None = None,
+        max_results: int = 50,
         max_requests: int = 50,
     ) -> list[dict[str, Any]]:
         """Search Jira issues by JQL across pages, bounded by request count.
@@ -89,6 +90,7 @@ class JiraClient:
         Args:
             jql: Jira Query Language string to execute.
             fields: Optional issue field IDs or names to include in the response.
+            max_results: Maximum number of issues to return per request.
             max_requests: Maximum number of API requests to send.
 
         Returns:
@@ -100,14 +102,17 @@ class JiraClient:
         Permissions:
             Same as the Jira issue search API.
         """
+        if max_results < 1:
+            raise ValueError("max_results must be at least 1")
         _validate_max_requests(max_requests)
 
         issues: list[dict[str, Any]] = []
         next_page_token: str | None = None
 
         for _ in range(max_requests):
-            response = self._fetch_issue_search_page(
+            response = self._search_issues_by_jql_page(
                 jql,
+                max_results=max_results,
                 fields=fields,
                 next_page_token=next_page_token,
             )
@@ -480,7 +485,7 @@ class JiraClient:
             },
         )
 
-    def _fetch_issue_search_page(
+    def _search_issues_by_jql_page(
         self,
         jql: str,
         *,

@@ -53,7 +53,7 @@ class JiraClientTest(unittest.TestCase):
             transport=transport,
             logger=mock_logger,
         ) as client:
-            client.fetch_issues_by_jql("project = DEV")
+            client.search_issues_by_jql("project = DEV")
 
         mock_logger.debug.assert_called_once_with(
             "Jira API request: %s %s",
@@ -61,7 +61,7 @@ class JiraClientTest(unittest.TestCase):
             "rest/api/3/search/jql",
         )
 
-    def test_private_fetch_issue_search_page_posts_expected_payload(self) -> None:
+    def test_private_search_issues_by_jql_page_posts_expected_payload(self) -> None:
         captured_request: httpx.Request | None = None
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -88,7 +88,7 @@ class JiraClientTest(unittest.TestCase):
             api_token="token",
             transport=transport,
         ) as client:
-            result = client._fetch_issue_search_page(
+            result = client._search_issues_by_jql_page(
                 "project = DEV ORDER BY updated DESC",
                 max_results=10,
                 fields=["summary", "status"],
@@ -114,7 +114,7 @@ class JiraClientTest(unittest.TestCase):
             },
         )
 
-    def test_fetch_issues_by_jql_fetches_pages_until_last(self) -> None:
+    def test_search_issues_by_jql_fetches_pages_until_last(self) -> None:
         request_payloads: list[dict[str, object]] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -145,7 +145,7 @@ class JiraClientTest(unittest.TestCase):
             api_token="token",
             transport=transport,
         ) as client:
-            issues = client.fetch_issues_by_jql(
+            issues = client.search_issues_by_jql(
                 "project = DEV",
                 fields=["summary"],
             )
@@ -168,7 +168,7 @@ class JiraClientTest(unittest.TestCase):
             ],
         )
 
-    def test_fetch_issues_by_jql_stops_at_max_requests(self) -> None:
+    def test_search_issues_by_jql_stops_at_max_requests(self) -> None:
         request_count = 0
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -190,13 +190,22 @@ class JiraClientTest(unittest.TestCase):
             api_token="token",
             transport=transport,
         ) as client:
-            issues = client.fetch_issues_by_jql(
+            issues = client.search_issues_by_jql(
                 "project = DEV",
                 max_requests=2,
             )
 
         self.assertEqual(request_count, 2)
         self.assertEqual([issue["key"] for issue in issues], ["DEV-1", "DEV-2"])
+
+    def test_search_issues_by_jql_rejects_non_positive_page_size(self) -> None:
+        with JiraClient(
+            base_url="https://example.atlassian.net",
+            email="user@example.com",
+            api_token="token",
+        ) as client:
+            with self.assertRaisesRegex(ValueError, "max_results"):
+                client.search_issues_by_jql("project = DEV", max_results=0)
 
     def test_count_issues_by_jql_returns_count(self) -> None:
         captured_request: httpx.Request | None = None
