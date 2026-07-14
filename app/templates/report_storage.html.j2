@@ -1,0 +1,17 @@
+<h1>Daily Report</h1>
+<p>Period: {{ start_date.strftime("%Y/%m/%d %H:%M") }} - {{ end_date.strftime("%Y/%m/%d %H:%M") }}</p>
+<h2>SLO Summary</h2>
+{% if slo_results %}
+<table>
+  <tbody>
+  {% for result in slo_results %}
+    <tr>
+      <th>{{ result.name }}</th>
+      <td>{{ result.value }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No SLO results.</p>
+{% endif %}

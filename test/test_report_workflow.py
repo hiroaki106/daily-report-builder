@@ -146,14 +146,20 @@ class ReportWorkflowTest(unittest.TestCase):
                 Mock(),
             )
 
-    def test_placeholder_operations_return_empty_values(self) -> None:
+    @patch("app.report_workflow.create_report_storage", return_value="<p>report</p>")
+    def test_placeholder_operations_return_empty_slo_results(
+        self, create_storage: Mock
+    ) -> None:
         start_date = datetime(2026, 7, 1, 9)
         end_date = datetime(2026, 7, 1, 18)
 
         slo_results = aggregate_slo(start_date, end_date)
 
         self.assertEqual(slo_results, [])
-        self.assertEqual(build_report_body(start_date, end_date, slo_results), "")
+        self.assertEqual(
+            build_report_body(start_date, end_date, slo_results), "<p>report</p>"
+        )
+        create_storage.assert_called_once_with(start_date, end_date, slo_results)
 
 
 if __name__ == "__main__":

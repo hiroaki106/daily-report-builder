@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any
 
 from app import config
+from app.report_storage import create_report_storage
 from app.utils.confluence_client import ConfluenceClient
 from app.utils.jira_client import JiraAPIError, JiraClient
 
@@ -104,7 +105,7 @@ def build_report_body(
     end_date: datetime,
     slo_results: list[dict[str, Any]],
 ) -> str:
-    return ""
+    return create_report_storage(start_date, end_date, slo_results)
 
 
 def create_confluence_page(
