@@ -87,7 +87,7 @@ class ConfluenceDataCenterClient:
             Raw Confluence user response.
 
         Reference:
-            https://developer.atlassian.com/server/confluence/confluence-rest-api-examples/
+            https://developer.atlassian.com/server/confluence/rest/v10214/api-group-user/#api-rest-api-user-current-get
 
         Permissions:
             Requires permission to access the Confluence site. Data Center REST
@@ -105,7 +105,7 @@ class ConfluenceDataCenterClient:
             Space ID when the key exists in the response, otherwise ``None``.
 
         Reference:
-            https://developer.atlassian.com/server/confluence/confluence-rest-api-examples/
+            https://developer.atlassian.com/server/confluence/rest/v10214/api-group-space/#api-rest-api-space-spacekey-get
 
         Permissions:
             Requires permission to view the space. Data Center REST endpoints
@@ -136,7 +136,7 @@ class ConfluenceDataCenterClient:
             Page ID for the first matching page, otherwise ``None``.
 
         Reference:
-            https://developer.atlassian.com/server/confluence/confluence-rest-api-examples/#find-a-page-by-title-and-space-key
+            https://developer.atlassian.com/server/confluence/rest/v10214/api-group-content-resource/#api-rest-api-content-get
 
         Permissions:
             Requires permission to view the matching page. Data Center REST
@@ -184,7 +184,7 @@ class ConfluenceDataCenterClient:
             Raw Confluence content response.
 
         Reference:
-            https://developer.atlassian.com/server/confluence/confluence-rest-api-examples/
+            https://developer.atlassian.com/server/confluence/rest/v10214/api-group-content-resource/#api-rest-api-content-id-get
 
         Permissions:
             Requires permission to view the page. Data Center REST endpoints use
@@ -215,7 +215,7 @@ class ConfluenceDataCenterClient:
             response does not include that body format.
 
         Reference:
-            https://developer.atlassian.com/server/confluence/confluence-rest-api-examples/
+            https://developer.atlassian.com/server/confluence/rest/v10214/api-group-content-resource/#api-rest-api-content-id-get
 
         Permissions:
             Requires permission to view the page. Data Center REST endpoints use
@@ -260,7 +260,7 @@ class ConfluenceDataCenterClient:
             Raw Confluence content creation response.
 
         Reference:
-            https://developer.atlassian.com/server/confluence/confluence-rest-api-examples/#create-a-new-page-as-a-child-of-another-page
+            https://developer.atlassian.com/server/confluence/rest/v10214/api-group-content-resource/#api-rest-api-content-post
 
         Permissions:
             Requires permission to create pages in the target space and view the
@@ -323,7 +323,7 @@ class ConfluenceDataCenterClient:
             Raw Confluence content update response.
 
         Reference:
-            https://developer.atlassian.com/server/confluence/confluence-rest-api-examples/#update-a-page
+            https://developer.atlassian.com/server/confluence/rest/v10214/api-group-content-resource/#api-rest-api-content-contentid-put
 
         Permissions:
             Requires permission to edit the page. Data Center REST endpoints use
@@ -391,7 +391,9 @@ class ConfluenceDataCenterClient:
 
         Reference:
             Uses the Data Center content find, get, and create endpoints:
-            https://developer.atlassian.com/server/confluence/confluence-rest-api-examples/
+            https://developer.atlassian.com/server/confluence/rest/v10214/api-group-content-resource/#api-rest-api-content-get
+            https://developer.atlassian.com/server/confluence/rest/v10214/api-group-content-resource/#api-rest-api-content-id-get
+            https://developer.atlassian.com/server/confluence/rest/v10214/api-group-content-resource/#api-rest-api-content-post
 
         Permissions:
             Requires permission to view or create the relevant pages. Data Center
